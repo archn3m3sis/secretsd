@@ -158,24 +158,28 @@ sec_enforce_all() {
 
   [ -z "$findings" ] && [ -z "$plaintext" ] && return 0
 
-  printf '\n'
-  if [ -n "$plaintext" ]; then
-    ui_err "PLAINTEXT CREDENTIALS PRESENT"
-    printf '%s\n' "$plaintext" | sed 's/^/      /'
-    ui_note "A plaintext export sitting beside an encrypted store is how credentials"
-    ui_note "leak. Nothing has been moved or deleted — the decision is yours."
-  fi
-  if [ -n "$findings" ]; then
-    ui_warn "permissions are more open than they should be:"
-    printf '%s\n' "$findings" | while IFS=' ' read -r kind path mode; do
-      case "$kind" in
-        MODE)  printf '      %s is mode %s\n' "$path" "$mode" ;;
-        OWNER) printf '      %s is owned by %s, not you\n' "$path" "$mode" ;;
-      esac
-    done
-  fi
-  ui_note "Nothing was changed. Review and fix from POSTURE on the home screen."
-  printf '\n'
+  # EVERYTHING below goes to stderr. `secretsd names` and friends are piped into
+  # scripts, and a warning on stdout silently corrupts the caller's data.
+  {
+    printf '\n'
+    if [ -n "$plaintext" ]; then
+      ui_err "PLAINTEXT CREDENTIALS PRESENT"
+      printf '%s\n' "$plaintext" | sed 's/^/      /'
+      ui_note "A plaintext export sitting beside an encrypted store is how credentials"
+      ui_note "leak. Nothing has been moved or deleted — the decision is yours."
+    fi
+    if [ -n "$findings" ]; then
+      ui_warn "permissions are more open than they should be:"
+      printf '%s\n' "$findings" | while IFS=' ' read -r kind path mode; do
+        case "$kind" in
+          MODE)  printf '      %s is mode %s\n' "$path" "$mode" ;;
+          OWNER) printf '      %s is owned by %s, not you\n' "$path" "$mode" ;;
+        esac
+      done
+    fi
+    ui_note "Nothing was changed. Review and fix from POSTURE on the home screen."
+    printf '\n'
+  } >&2
   return 0
 }
 

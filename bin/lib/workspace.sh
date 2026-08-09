@@ -652,7 +652,7 @@ HOMEG
   if mon_scheduled 2>/dev/null; then monstate=ok; mondesc="running on a schedule"
   else monstate=warn; mondesc="not scheduled"; fi
   _row monitor   '⡗⠦⢄' "$N_CYAN"     "MONITOR"   "$mondesc" "$monstate" \
-       "$([ -f "$MON_LOG" ] && echo "$(grep -c NUDGED "$MON_LOG" 2>/dev/null) nudges sent" || echo "never run")" \
+       "$([ -f "$MON_LOG" ] && echo "$(grep -c NUDGED "$MON_LOG" 2>/dev/null | head -1) nudges sent" || echo "never run")" \
        "walks sessions and restarts the ones that merely stalled"
   _row posture   '⣿⣿⡀' "$T_ERR"      "POSTURE"   "$nfind finding(s)" \
        "$([ "${ncrit:-0}" -gt 0 ] && echo err || { [ "${nfind:-0}" -gt 0 ] && echo warn || echo ok; })" \

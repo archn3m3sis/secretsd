@@ -28,7 +28,10 @@ certs_field() {
 }
 
 # certs_count PATH — how many certificates are in the file (bundles are common)
-certs_count() { grep -c 'BEGIN CERTIFICATE' "$1" 2>/dev/null || printf '0'; }
+# grep -c prints 0 AND exits non-zero when there are no matches, so the idiom
+# `grep -c ... || printf 0` emits "0\n0" and every downstream [ ] test dies with
+# "integer expected". Count lines instead.
+certs_count() { grep -c 'BEGIN CERTIFICATE' "$1" 2>/dev/null | head -1; }
 
 # certs_days_left PATH -> integer days (negative = already expired), or empty
 certs_days_left() {
