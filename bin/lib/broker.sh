@@ -253,7 +253,7 @@ BRK
     done
     local pad=$(( TUI_ROWS - curline - 2 )); [ "$pad" -lt 0 ] && pad=0
     i=0; while [ "$i" -lt "$pad" ]; do tui_blank; i=$(( i + 1 )); done
-    tui_footer "↑↓ move" "space mark" "m merge" "j janitor" "A archive" "X purge" "esc back"
+    tui_footer "↑↓ move" "space mark" "m merge" "j janitor" "p profiles" "A archive" "X purge" "esc back"
     tui_clear_below
   }
 
@@ -332,6 +332,8 @@ BRK
 
       char:j)
         tui_end; janitor_screen; tui_begin; tui_dims; draw_brks; continue ;;
+      char:p)
+        tui_end; profiles_screen; tui_begin; tui_dims; draw_brks; continue ;;
       char:A)
         tui_end
         tui_page "ARCHIVE · $(tui_fit "${B_NAME[$sel]}" 40)" "${B_TR[$sel]}"
