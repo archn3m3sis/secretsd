@@ -295,7 +295,7 @@ BRK
         printf '   %s2  each is shown the other and argues what carries forward — 2 calls%s\n' "$T_MUTE" "$T_RS"
         printf '   %s3  a neutral instance writes the consolidated brief — 1 call%s\n' "$T_MUTE" "$T_RS"
         printf '\n'
-        ui_warn "Five model calls against your subscription, roughly a minute in total."
+        ui_warn "Five model calls against your subscription, roughly three to five minutes."
         ui_note "Neither original session is modified. If the brief is wrong you still have both."
         printf '\n'
         if ui_confirm "Broker a merge of these two?"; then
@@ -429,14 +429,14 @@ JANL
   tui_section "HOW IT WORKS"
   printf '   %sEach session is asked, with its own history in front of it, whether it is\n' "$T_MUTE"
   printf '   still worth keeping — and why. One model call per session.%s\n\n' "$T_RS"
-  ui_warn "That is one call per session against your subscription, ~8s each."
+  ui_warn "One call per session against your subscription, 35-45s each."
   ui_note "It only ever RECOMMENDS. Nothing is archived or deleted without you."
   printf '\n'
 
   local batch scope
   batch="$(tui_menu "HOW MANY TO SURVEY" "start small — you can always run it again" \
-    "Oldest 5|about 40 seconds" \
-    "Oldest 15|about 2 minutes" \
+    "Oldest 5|about 3 minutes" \
+    "Oldest 15|about 10 minutes" \
     "Everything untouched for 30+ days|however many that is" \
     "Cancel|survey nothing")" || return 0
   case "$batch" in

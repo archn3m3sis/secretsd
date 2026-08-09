@@ -449,10 +449,12 @@ PL
         tui_page "${P_TITLE[$sel]}" "${P_BLURB[$sel]}"
         printf '\n'
         local scope howmany
-        scope="$(tui_menu "HOW MANY SESSIONS" "one model call each, about 8 seconds apiece" \
-          "Most recent 5|roughly a minute" \
-          "Most recent 10|roughly 90 seconds" \
-          "Most recent 25|roughly four minutes" \
+        # Measured, not guessed: a survey call runs 35-45s against a real session,
+        # and the synthesis pass over a handful of reports took three minutes.
+        scope="$(tui_menu "HOW MANY SESSIONS" "~40s per session, plus 1-3 min to cross-reference" \
+          "Most recent 5|about 6 minutes" \
+          "Most recent 10|about 10 minutes" \
+          "Most recent 25|about 20 minutes — start one and walk away" \
           "Cancel|survey nothing")" || { tui_begin; tui_dims; draw_profs; continue; }
         case "$scope" in
           "Most recent 5")  howmany=5 ;;
