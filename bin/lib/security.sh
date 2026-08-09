@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# lib/security.sh — enforcement, not advice.
+#
+# THIS LAYER NEVER MODIFIES YOUR FILES. It measures, it reports, and it keeps
+# reporting every launch until you resolve the finding — but the decision is
+# always yours. Nothing is chmod-ed, moved, or deleted on your behalf.
+#
+# The one thing it does impose is on ITSELF: umask, core dumps, and its own
+# scratch directory. Hardening its own process is not a decision about your
+# machine.
+#
+#   1 umask 077          nothing this process creates is group/world readable
+#   2 no root            refuses to run as root: root-owned files in your vault
+#                        and a root-readable agent socket are both unrecoverable
+#   3 key permissions    REPORTS an age key that is not 0600 and owned by you
+#   4 store permissions  REPORTS any encrypted store that is not 0600
+#   5 scratch            its own temp dir is forced to 0700 (this process only)
+#   6 plaintext          REPORTS plaintext credential files in secrets/ loudly,
+#                        every launch, until you deal with them
+#   7 clipboard          any value copied is cleared on exit as well as on TTL
+#   8 idle lock          the interface quits itself after inactivity
+#   9 core dumps         disabled, so a crash cannot spill decrypted memory
+#
+# Sourced, never executed.
+
+# --- 1. process hardening, applied at source time -----------------------------
+umask 077
+ulimit -c 0 2>/dev/null || true          # 9: no core dumps carrying plaintext
+
+SEC_IDLE_TIMEOUT="${SEC_IDLE_TIMEOUT:-600}"   # 8: seconds of inactivity before lock
+
+# --- helpers ------------------------------------------------------------------
+sec_mode()  { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
+sec_owner() { stat -f '%Su' "$1" 2>/dev/null || stat -c '%U' "$1" 2>/dev/null; }
+
+# sec_mode_bad PATH MAXMODE -> 0 (true) when the file is more permissive
+sec_mode_bad() {
+  local m; m="$(sec_mode "$1")"
+  [ -n "$m" ] || return 1
+  [ "$(( 8#$m & 8#077 ))" -ne 0 ] && return 0
+  return 1
+}
+
+# --- 2. refuse to run as root -------------------------------------------------
+sec_enforce_not_root() {
+  if [ "$(id -u)" = "0" ]; then
+    ui_err "refusing to run as root"
+    ui_note "Running this as root creates root-owned files inside your vault and"
+    ui_note "leaves a root-readable agent socket. Both are worse than the problem"
+    ui_note "you were trying to solve. Run it as your own user."
+    exit 1
+  fi
+}
+
+# --- 3/4. permission enforcement ----------------------------------------------
+# Reports offending paths. REPAIR=1 is available for an explicit, user-initiated
+# fix from the posture screen — it is never passed on a normal launch.
+sec_audit_permissions() {   # $1 = repair? (0/1)  -> prints findings, returns 1 if any
+  local repair="${1:-0}" bad=0 f m
+
+  # the age private key is the crown jewel
+  if [ -f "$SOPS_AGE_KEY_FILE" ]; then
+    if [ "$(sec_owner "$SOPS_AGE_KEY_FILE")" != "$(id -un)" ]; then
+      printf 'OWNER %s %s\n' "$SOPS_AGE_KEY_FILE" "$(sec_owner "$SOPS_AGE_KEY_FILE")"
+      bad=1
+    fi
+    if sec_mode_bad "$SOPS_AGE_KEY_FILE"; then
+      m="$(sec_mode "$SOPS_AGE_KEY_FILE")"
+      printf 'MODE %s %s\n' "$SOPS_AGE_KEY_FILE" "$m"
+      [ "$repair" = "1" ] && chmod 600 "$SOPS_AGE_KEY_FILE"
+      bad=1
+    fi
+    local kd; kd="$(dirname "$SOPS_AGE_KEY_FILE")"
+    if sec_mode_bad "$kd"; then
+      printf 'MODE %s %s\n' "$kd" "$(sec_mode "$kd")"
+      [ "$repair" = "1" ] && chmod 700 "$kd"
+      bad=1
+    fi
+  fi
+
+  # every encrypted store
+  for f in "$SEC_SECRETS"/*.enc.* "$SEC_ENC_DIR"/*.enc.*; do
+    [ -f "$f" ] || continue
+    if sec_mode_bad "$f"; then
+      printf 'MODE %s %s\n' "$f" "$(sec_mode "$f")"
+      [ "$repair" = "1" ] && chmod 600 "$f"
+      bad=1
+    fi
+  done
+
+  # metadata files: no values, but they map your whole access surface
+  for f in "$SEC_SECRETS"/*.yaml "$SEC_SECRETS"/*.md; do
+    [ -f "$f" ] || continue
+    if sec_mode_bad "$f"; then
+      printf 'MODE %s %s\n' "$f" "$(sec_mode "$f")"
+      [ "$repair" = "1" ] && chmod 600 "$f"
+      bad=1
+    fi
+  done
+
+  return $(( bad == 0 ? 0 : 1 ))
+}
+
+# --- 5. scratch space ---------------------------------------------------------
+sec_enforce_scratch() {
+  [ -n "${TMPD:-}" ] || return 0
+  chmod 700 "$TMPD" 2>/dev/null
+  if sec_mode_bad "$TMPD"; then
+    ui_err "scratch directory $TMPD is group/world accessible and could not be fixed"
+    exit 1
+  fi
+}
+
+# --- 7. clipboard scrubbing on exit -------------------------------------------
+# Whatever `secrets copy` put on the clipboard is cleared when the program ends,
+# not only when its timer fires — quitting must not leave a value behind.
+SEC_CLIP_HASH=""
+sec_clip_scrub() {
+  [ -n "$SEC_CLIP_HASH" ] || return 0
+  local get put cur
+  case "$(uname -s)" in
+    Darwin) get=pbpaste; put=pbcopy ;;
+    *) if command -v wl-paste >/dev/null 2>&1; then get=wl-paste; put=wl-copy
+       elif command -v xclip >/dev/null 2>&1; then get="xclip -selection clipboard -o"; put="xclip -selection clipboard"
+       else return 0; fi ;;
+  esac
+  cur="$($get 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"
+  [ "$cur" = "$SEC_CLIP_HASH" ] && printf '' | $put 2>/dev/null
+  SEC_CLIP_HASH=""
+}
+
+# --- 8. idle lock -------------------------------------------------------------
+# tui_readkey blocks forever by default. This wraps it with a timeout so an
+# unattended terminal does not sit on an open vault indefinitely.
+sec_readkey_timed() {
+  local k
+  if [ "${BASH_VERSINFO[0]:-3}" -ge 4 ] && [ "${SEC_IDLE_TIMEOUT:-0}" -gt 0 ]; then
+    if ! IFS= read -rsn1 -t "$SEC_IDLE_TIMEOUT" k </dev/tty 2>/dev/null; then
+      printf 'idle'; return 0
+    fi
+  else
+    IFS= read -rsn1 k </dev/tty 2>/dev/null || return 1
+  fi
+  tui_decode_key "$k"
+}
+
+# --- the gate -----------------------------------------------------------------
+# Runs once per launch. It BLOCKS nothing and CHANGES nothing — it states what is
+# wrong, every single time, until you choose to act. Persistent nagging is the
+# enforcement; the authority stays with you.
+sec_enforce_all() {
+  sec_enforce_not_root          # the only refusal: root would create files we cannot undo
+  sec_enforce_scratch           # our own scratch dir, not yours
+
+  local findings plaintext
+  findings="$(sec_audit_permissions 0)"
+  plaintext="$(sec_find_plaintext)"
+
+  [ -z "$findings" ] && [ -z "$plaintext" ] && return 0
+
+  printf '\n'
+  if [ -n "$plaintext" ]; then
+    ui_err "PLAINTEXT CREDENTIALS PRESENT"
+    printf '%s\n' "$plaintext" | sed 's/^/      /'
+    ui_note "A plaintext export sitting beside an encrypted store is how credentials"
+    ui_note "leak. Nothing has been moved or deleted — the decision is yours."
+  fi
+  if [ -n "$findings" ]; then
+    ui_warn "permissions are more open than they should be:"
+    printf '%s\n' "$findings" | while IFS=' ' read -r kind path mode; do
+      case "$kind" in
+        MODE)  printf '      %s is mode %s\n' "$path" "$mode" ;;
+        OWNER) printf '      %s is owned by %s, not you\n' "$path" "$mode" ;;
+      esac
+    done
+  fi
+  ui_note "Nothing was changed. Review and fix from POSTURE on the home screen."
+  printf '\n'
+  return 0
+}
+
+# sec_find_plaintext -> plaintext credential files under secrets/, one per line
+sec_find_plaintext() {
+  local f
+  for f in "$SEC_SECRETS"/* "$SEC_SECRETS"/.[!.]* "$SEC_ENC_DIR"/*; do
+    [ -f "$f" ] || continue
+    case "$f" in
+      *.enc.env|*.enc.yaml|*.enc.json|*.md|*.yaml|*.bak-*|*.selftest-only.bak) continue ;;
+    esac
+    if [ -s "$f" ] && ! grep -q 'sops_' "$f" 2>/dev/null \
+       && grep -qE '^[A-Za-z_][A-Za-z0-9_]*=' "$f" 2>/dev/null; then
+      printf '%s\n' "$f"
+    fi
+  done
+}
