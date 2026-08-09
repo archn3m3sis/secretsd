@@ -630,6 +630,24 @@ home_screen() {
   _row yubikey   '⣰⣉⣉⣆' "$N_AMBER"   "YUBIKEY"   "$ykdesc" "$ykstate" \
        "$(yk_have && echo 'hardware-backed' || echo 'brew install ykman')" \
        "codes, PIV slots, and moving TOTP seeds off disk onto the key"
+  local kithave guarded gtotal
+  kithave="$(ls "$HOME"/Documents/secretsd-recovery-*.age 2>/dev/null | sec_nlines)"
+  gtotal=0; guarded=0
+  while IFS= read -r _p; do
+    [ -d "$_p/.git" ] || continue
+    gtotal=$(( gtotal + 1 ))
+    guard_installed "$_p" && guarded=$(( guarded + 1 ))
+  done <<HOMEG
+$(ws_discover 2>/dev/null | sort -u)
+HOMEG
+  _row recovery  '⡏⣩⣍⢹' "$N_RED"      "RECOVERY"  "$([ "${kithave:-0}" -gt 0 ] && echo "$kithave kit(s)" || echo "no kit")" \
+       "$([ "${kithave:-0}" -gt 0 ] && echo ok || echo err)" \
+       "$([ "${kithave:-0}" -gt 0 ] && echo "verified on build" || echo "one key, one file, no backup")" \
+       "lose the age key and every credential is gone — build and prove a kit"
+  _row guard     '⡏⠭⠭⢹' "$N_GREEN"    "COMMIT GUARD" "$guarded of $gtotal repos" \
+       "$([ "${guarded:-0}" -ge "${gtotal:-1}" ] && echo ok || echo warn)" \
+       "$([ "${guarded:-0}" -gt 0 ] && echo "hook installed" || echo "nothing is blocking a leak")" \
+       "refuses the commit that contains a credential, instead of cleaning up after"
   _row posture   '⣿⣿⡀' "$T_ERR"      "POSTURE"   "$nfind finding(s)" \
        "$([ "${ncrit:-0}" -gt 0 ] && echo err || { [ "${nfind:-0}" -gt 0 ] && echo warn || echo ok; })" \
        "$([ "${ncrit:-0}" -gt 0 ] && echo "$ncrit critical" || echo "nothing critical")" \
@@ -709,6 +727,8 @@ home_screen() {
           sessions)  ws_sessions_screen ;;
           pkm)       pkm_screen ;;
           yubikey)   yubikey_screen ;;
+          recovery)  recovery_screen ;;
+          guard)     guard_screen ;;
           posture)   posture_screen ;;
           doctor)    do_doctor; ui_pause ;;
         esac

@@ -574,6 +574,7 @@ tui_icon_top() {
     inbox)    printf '⠀⣺⣗⠀' ;;  sessions)  printf '⣠⠞⠳⣄' ;;
     pkm)      printf '⣴⣹⣏⣦' ;;  posture)   printf '⡏⠭⠭⢹' ;;
     doctor)   printf '⠯⠿⠿⠽' ;;
+    recovery) printf '⡏⣩⣍⢹' ;;  guard) printf '⡏⠭⠭⢹' ;;
     *)        printf '⡏⠉⠉⢹' ;;
   esac
 }
@@ -590,6 +591,7 @@ tui_icon_bot() {
     inbox)    printf '⣾⠿⠿⣷' ;;  sessions)  printf '⠙⢦⡴⠋' ;;
     pkm)      printf '⠙⠼⠧⠋' ;;  posture)   printf '⠉⢯⡽⠉' ;;
     doctor)   printf '⠯⣿⣿⠽' ;;
+    recovery) printf '⣇⣙⣋⣸' ;;  guard) printf '⠉⢯⡽⠉' ;;
     *)        printf '⣇⣀⣀⣸' ;;
   esac
 }
