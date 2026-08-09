@@ -245,7 +245,7 @@ ws_launch_scoped() {
   ui_info "id         $uuid"
   ui_info "transcript $(ws_transcript_path "$p" "$uuid")"
   printf '\n'
-  ( cd "$p" && "$SEC_BIN/secret" run --profile "$prof" -- claude --session-id "$uuid" --name "$nm" )
+  ( cd "$p" && "$SEC_SELF" run --profile "$prof" -- claude --session-id "$uuid" --name "$nm" )
   ui_info "session '$nm' ended — back in the workspace"
   ui_pause
 }
@@ -648,6 +648,12 @@ HOMEG
        "$([ "${guarded:-0}" -ge "${gtotal:-1}" ] && echo ok || echo warn)" \
        "$([ "${guarded:-0}" -gt 0 ] && echo "hook installed" || echo "nothing is blocking a leak")" \
        "refuses the commit that contains a credential, instead of cleaning up after"
+  local monstate mondesc
+  if mon_scheduled 2>/dev/null; then monstate=ok; mondesc="running on a schedule"
+  else monstate=warn; mondesc="not scheduled"; fi
+  _row monitor   '⡗⠦⢄' "$N_CYAN"     "MONITOR"   "$mondesc" "$monstate" \
+       "$([ -f "$MON_LOG" ] && echo "$(grep -c NUDGED "$MON_LOG" 2>/dev/null) nudges sent" || echo "never run")" \
+       "walks sessions and restarts the ones that merely stalled"
   _row posture   '⣿⣿⡀' "$T_ERR"      "POSTURE"   "$nfind finding(s)" \
        "$([ "${ncrit:-0}" -gt 0 ] && echo err || { [ "${nfind:-0}" -gt 0 ] && echo warn || echo ok; })" \
        "$([ "${ncrit:-0}" -gt 0 ] && echo "$ncrit critical" || echo "nothing critical")" \
@@ -729,6 +735,7 @@ HOMEG
           yubikey)   yubikey_screen ;;
           recovery)  recovery_screen ;;
           guard)     guard_screen ;;
+          monitor)   monitor_screen ;;
           posture)   posture_screen ;;
           doctor)    do_doctor; ui_pause ;;
         esac

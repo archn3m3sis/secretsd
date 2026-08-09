@@ -13,7 +13,7 @@
 #
 # Sourced, never executed.
 
-DNS_TOKEN_KEY="${DNS_TOKEN_KEY:-CF_DNS_EDIT_TOKEN}"
+export DNS_TOKEN_KEY="${DNS_TOKEN_KEY:-CF_DNS_EDIT_TOKEN}"
 DNS_API="https://api.cloudflare.com/client/v4"
 
 # dns_api METHOD PATH [JSON_BODY] -> raw JSON on stdout
@@ -39,8 +39,10 @@ else
       "$DNS_URL"
 fi
 CALL
-  DNS_TOKEN_KEY="$DNS_TOKEN_KEY" DNS_METHOD="$method" DNS_URL="$DNS_API$path" DNS_BODY="$body" \
-    "$SEC_BIN/secret" run --only "$DNS_TOKEN_KEY" -- bash "$script" 2>/dev/null
+  # DNS_TOKEN_KEY is already exported at file scope; re-assigning it in the
+  # prefix made shellcheck think the expansion below could not see it.
+  DNS_METHOD="$method" DNS_URL="$DNS_API$path" DNS_BODY="$body" \
+    "$SEC_SELF" run --only "$DNS_TOKEN_KEY" -- bash "$script" 2>/dev/null
 }
 
 dns_ok()   { printf '%s' "$1" | jq -e '.success == true' >/dev/null 2>&1; }

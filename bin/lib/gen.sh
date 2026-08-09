@@ -179,7 +179,7 @@ totp_cmd() {
     seed="$(rece_get "$SEC_ENC_DIR/logins.enc.yaml" "$name" totp)"
   fi
   if [ -z "$seed" ] && sec_has "$name"; then
-    seed="$("$SEC_BIN/secret" run --only "$name" -- sh -c "printf '%s' \"\$$name\"")"
+    seed="$("$SEC_SELF" run --only "$name" -- sh -c "printf '%s' \"\$$name\"")"
   fi
   [ -n "$seed" ] || sec_die "no TOTP seed found for '$name'"
   code="$(gen_totp "$seed")"; unset seed
