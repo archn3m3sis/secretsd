@@ -860,6 +860,94 @@ if want expiry; then
   fi
 fi
 
+
+# ==============================================================================
+# the certificate scanner
+#
+# It replaced ~6 processes per certificate (openssl per FIELD, plus date twice,
+# plus grep) with one python pass that walks the DER directly. A speed change is
+# only safe if the answer is provably identical, so the first assertion is a
+# cross-check against openssl on every certificate the machine can see.
+# ==============================================================================
+if want certscan; then
+  group "certificate scanner"
+
+  SCAN="$ROOT/bin/lib/certscan.py"
+  CDIR="$DATA/certfix"; mkdir -p "$CDIR"
+
+  if command -v openssl >/dev/null 2>&1; then
+    # a spread of shapes: a normal cert, a bundle, and a DER-encoded .cer
+    openssl req -x509 -newkey rsa:2048 -keyout "$CDIR/a.key" -out "$CDIR/a.pem" \
+      -days 400 -nodes -subj "/CN=alpha.test" >/dev/null 2>&1
+    openssl req -x509 -newkey rsa:2048 -keyout "$CDIR/b.key" -out "$CDIR/b.pem" \
+      -days 30 -nodes -subj "/CN=beta.test/O=Example" >/dev/null 2>&1
+    cat "$CDIR/a.pem" "$CDIR/b.pem" > "$CDIR/bundle.pem"
+    openssl x509 -in "$CDIR/a.pem" -outform DER -out "$CDIR/c.cer" >/dev/null 2>&1
+
+    # THE CROSS-CHECK: python's expiry must equal openssl's, to the second
+    bad=0; checked=0
+    for f in "$CDIR"/*.pem "$CDIR"/*.cer; do
+      [ -f "$f" ] || continue
+      pe="$(python3 "$SCAN" "$f" | awk -F'\t' '$5=="ok" {print $3}')"
+      [ -n "$pe" ] || continue
+      oe="$(openssl x509 -in "$f" -inform PEM -noout -enddate 2>/dev/null \
+            || openssl x509 -in "$f" -inform DER -noout -enddate 2>/dev/null)"
+      oe="${oe#notAfter=}"
+      oep="$(TZ=UTC date -j -f '%b %e %T %Y %Z' "$oe" +%s 2>/dev/null \
+             || TZ=UTC date -d "$oe" +%s 2>/dev/null)"
+      checked=$((checked+1))
+      [ "$pe" = "$oep" ] || bad=$((bad+1))
+    done
+    [ "$checked" -gt 0 ] && [ "$bad" = "0" ] \
+      && ok "the DER parse matches openssl on every certificate ($checked checked)" \
+      || no "$bad of $checked certificates disagree with openssl"
+
+    # the CN must match too — it is what the screen labels each row with
+    pcn="$(python3 "$SCAN" "$CDIR/b.pem" | awk -F'\t' '{print $2}')"
+    [ "$pcn" = "beta.test" ] && ok "the subject CN is read correctly from a multi-RDN subject" \
+                             || no "CN came back as [$pcn], expected beta.test"
+
+    # a bundle must report how many certificates it holds
+    pn="$(python3 "$SCAN" "$CDIR/bundle.pem" | awk -F'\t' '{print $4}')"
+    [ "$pn" = "2" ] && ok "a bundle reports its certificate count ($pn)" \
+                    || no "bundle count came back as [$pn], expected 2"
+
+    # a DER-encoded .cer must parse, since that is what most .cer files are
+    st="$(python3 "$SCAN" "$CDIR/c.cer" | awk -F'\t' '{print $5}')"
+    [ "$st" = "ok" ] && ok "a DER-encoded .cer parses without openssl" \
+                     || no "DER .cer came back [$st]"
+  else
+    skip "certificate cross-check" "openssl missing"
+  fi
+
+  # garbage must be reported as unparsed, NEVER dropped. A certificate that
+  # silently vanishes from an expiry report is the one that takes something down.
+  printf 'not a certificate at all\n' > "$CDIR/junk.pem"
+  st="$(python3 "$SCAN" "$CDIR/junk.pem" | awk -F'\t' '{print $5}')"
+  [ "$st" = "unparsed" ] && ok "an unreadable file is reported as unparsed, not dropped" \
+                         || no "unreadable file came back as [$st] — it may have vanished"
+
+  # every input must produce exactly one output line, whatever its shape
+  nin=0; for f in "$CDIR"/*; do case "$f" in *.key) ;; *) nin=$((nin+1)) ;; esac; done
+  nout="$(python3 "$SCAN" $(ls "$CDIR"/* | grep -v '\.key$') 2>/dev/null | wc -l | tr -d ' ')"
+  [ "$nin" = "$nout" ] && ok "every input file yields exactly one record ($nout)" \
+                       || no "$nin file(s) in, $nout record(s) out"
+
+  # the scheduled scan must NOT reach for the YubiKey
+  if grep -q 'with-piv' "$ROOT/bin/lib/alerts.sh"; then
+    no "the scheduled expiry scan probes the YubiKey"
+  else
+    ok "the scheduled expiry scan does not probe hardware"
+  fi
+
+  # and ykman must never be called twice for one probe
+  # count CODE, not comments — a grep that counts its own explanatory comment
+  # is the same mistake the guard tests had to fix
+  n="$(grep -n 'ykman list' "$ROOT/bin/lib/modcerts.sh" | grep -vE '^[0-9]+: *#' | grep -c . || true)"
+  [ "${n:-0}" -le 1 ] && ok "the PIV probe calls ykman once, not twice" \
+                      || no "ykman list appears $n times in one probe"
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"

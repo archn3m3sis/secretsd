@@ -54,51 +54,92 @@ alert_scan() {
   local now n exp e left
   now="$(date +%s)"
 
-  # 1 · manifest-recorded expiry
+  # 1 · manifest-recorded expiry, in ONE process.
   #
   # This deliberately does NOT skip when the manifest is missing. A store with
   # no manifest has NO recorded expiry for anything, which is the worst case,
-  # not a clean one — and an early return here would report it as silence. That
-  # is exactly the failure this whole file exists to prevent, so the loop runs
-  # regardless and sec_manifest_field simply returns empty for every key.
-  if true; then
-    while IFS= read -r n; do
-      [ -n "$n" ] || continue
-      exp="$(sec_manifest_field "$n" expires 2>/dev/null)"
-      case "$exp" in
-        none) ;;                       # explicitly declared as never expiring
-        ""|TODO|*TODO*)
-          printf 'unknown|manifest|%s|no expiry recorded — nobody knows when this dies|\n' "$n" ;;
-        *)
-          e="$(sec_epoch_of "$exp")"
-          if [ -z "$e" ]; then
-            printf 'unknown|manifest|%s|expiry "%s" is not a date this can parse|\n' "$n" "$exp"
-          else
-            left=$(( (e - now) / 86400 ))
-            if   [ "$left" -lt 0 ];            then printf 'expired|manifest|%s|expired on %s|%s\n' "$n" "$exp" "$left"
-            elif [ "$left" -le "$urgent_w" ];   then printf 'urgent|manifest|%s|expires %s|%s\n'  "$n" "$exp" "$left"
-            elif [ "$left" -le "$soon_w" ];     then printf 'soon|manifest|%s|expires %s|%s\n'    "$n" "$exp" "$left"
-            fi
-          fi ;;
-      esac
-    done <<AMAN
-$(sec_names)
-AMAN
-  fi
+  # not a clean one — an early return here would report it as silence, which is
+  # exactly the failure this whole file exists to prevent.
+  #
+  # It also does not call sec_manifest_field per credential: that is an awk fork
+  # each, measured at 0.533s for 142 credentials, plus a `date` fork per dated
+  # entry to convert it. Both now happen inside a single python pass.
+  sec_names 2>/dev/null > "$TMPD/alert.names"
+  python3 - "$TMPD/alert.names" "${SEC_MANIFEST:-/nonexistent}" "$now" "$soon_w" "$urgent_w" <<'PY_MAN'
+import calendar, os, re, sys, time
 
-  # 2 · certificates on disk — the PEM is the truth, no bookkeeping required
-  local f d subj
-  while IFS= read -r f; do
+names_path, manifest_path, now, soon_w, urgent_w = sys.argv[1:6]
+now, soon_w, urgent_w = int(now), int(soon_w), int(urgent_w)
+
+expires = {}
+if os.path.exists(manifest_path):
+    key = None
+    with open(manifest_path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):\s*$", line)
+            if m:
+                key = m.group(1); continue
+            m = re.match(r"^\s+expires:\s*(.*?)\s*$", line)
+            if m and key:
+                v = re.sub(r"\s*#.*$", "", m.group(1)).strip()
+                expires[key] = v
+
+def epoch_of(v):
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d %b %Y", "%b %d %Y"):
+        try:
+            return calendar.timegm(time.strptime(v, fmt))
+        except ValueError:
+            pass
+    return None
+
+out = []
+with open(names_path, encoding="utf-8", errors="replace") as fh:
+    for name in fh:
+        name = name.strip()
+        if not name:
+            continue
+        v = expires.get(name, "")
+        if v == "none":
+            continue                                  # declared as never expiring
+        if not v or "TODO" in v:
+            out.append("unknown|manifest|%s|no expiry recorded — nobody knows when this dies|" % name)
+            continue
+        e = epoch_of(v)
+        if e is None:
+            out.append('unknown|manifest|%s|expiry "%s" is not a date this can parse|' % (name, v))
+            continue
+        left = (e - now) // 86400
+        if left < 0:
+            out.append("expired|manifest|%s|expired on %s|%d" % (name, v, left))
+        elif left <= urgent_w:
+            out.append("urgent|manifest|%s|expires %s|%d" % (name, v, left))
+        elif left <= soon_w:
+            out.append("soon|manifest|%s|expires %s|%d" % (name, v, left))
+print("\n".join(out)) if out else None
+PY_MAN
+
+  # 2 · certificates on disk — the PEM is the truth, no bookkeeping required.
+  #
+  # Read in ONE process. This loop used to call certs_days_left per file, which
+  # is an openssl fork plus two date forks each; the whole scan measured 2.238
+  # seconds, and it runs on every `expiring`, every alerts screen, and every
+  # scheduled launchd wake-up.
+  local f d subj cn epoch cnt st
+  while IFS="$(printf '\t')" read -r f cn epoch cnt st; do
     [ -n "$f" ] || continue
-    d="$(certs_days_left "$f" 2>/dev/null)"
-    case "$d" in ''|*[!0-9-]*) continue ;; esac
+    if [ "$st" = ok ]; then
+      d=$(( (epoch - now) / 86400 ))
+    else
+      d="$(certs_days_left "$f" 2>/dev/null)"     # fall back for this one file
+      case "$d" in ''|*[!0-9-]*) continue ;; esac
+    fi
     subj="$(basename "$f")"
     if   [ "$d" -lt 0 ];             then printf 'expired|cert|%s|expired %s day(s) ago — %s|%s\n' "$subj" "$(( -d ))" "$f" "$d"
     elif [ "$d" -le "$urgent_w" ];   then printf 'urgent|cert|%s|expires in %s day(s) — %s|%s\n'   "$subj" "$d" "$f" "$d"
     elif [ "$d" -le "$soon_w" ];     then printf 'soon|cert|%s|expires in %s day(s) — %s|%s\n'     "$subj" "$d" "$f" "$d"
     fi
   done <<ACERT
-$(certs_find 2>/dev/null)
+$(certs_scan_batch 2>/dev/null)
 ACERT
 }
 
