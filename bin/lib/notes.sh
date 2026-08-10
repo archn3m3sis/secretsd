@@ -38,7 +38,7 @@ notes_backend_ready() {
     obsidian)    [ -n "$(notes_vault)" ] && [ -d "$(notes_vault)" ] ;;
     plaintext)   [ -n "$(notes_vault)" ] ;;
     apple-notes) command -v osascript >/dev/null 2>&1 ;;
-    joplin)      curl -sS --max-time 2 "http://127.0.0.1:41184/ping" 2>/dev/null | grep -q JoplinClipperServer ;;
+    joplin)      curl -sS --max-time 2 "http://127.0.0.1:41184/ping" 2>/dev/null | ui_match_sub JoplinClipperServer ;;
     *)           return 1 ;;
   esac
 }

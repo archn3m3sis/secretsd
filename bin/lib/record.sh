@@ -324,7 +324,7 @@ FIELDS
         tui_page "DELETE · ${R_ID[$sel]}" "this cannot be undone"
         if ui_confirm "Delete record '${R_ID[$sel]}'?"; then
           rec_delete "$file" "${R_ID[$sel]}"
-          if rec_ids "$file" | grep -qx "${R_ID[$sel]}"; then ui_err "still present"
+          if rec_ids "$file" | ui_match_line "${R_ID[$sel]}"; then ui_err "still present"
           else ui_ok "deleted"; sec_log_start rec; sec_log "$mid delete ${R_ID[$sel]}"; fi
         else ui_info "kept"; fi
         ui_pause
@@ -405,7 +405,7 @@ SEEDC
   [ -f "$file" ] && existing="$(rec_ids "$file" | sec_nlines)"
   i=0
   while [ "$i" -lt "$n" ]; do
-    rec_ids "$file" 2>/dev/null | grep -qx "${P_NAME[$i]}" || willadd=$(( willadd + 1 ))
+    rec_ids "$file" 2>/dev/null | ui_match_line "${P_NAME[$i]}" || willadd=$(( willadd + 1 ))
     i=$(( i + 1 ))
   done
 
@@ -429,7 +429,7 @@ SEEDC
   local added=0 loc serve creds stack
   i=0
   while [ "$i" -lt "$n" ]; do
-    if rec_ids "$file" 2>/dev/null | grep -qx "${P_NAME[$i]}"; then i=$(( i + 1 )); continue; fi
+    if rec_ids "$file" 2>/dev/null | ui_match_line "${P_NAME[$i]}"; then i=$(( i + 1 )); continue; fi
     if [ -d "${P_PATH[$i]}" ]; then
       loc="${P_PATH[$i]/#$HOME/~}"
       stack="$(ws_stack "${P_PATH[$i]}")"

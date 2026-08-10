@@ -25,7 +25,7 @@ keys_private_paths() {
       *.pub|*known_hosts*|*authorized_keys*|*/config|*/config.*|*.bak*|*/agent) continue ;;
     esac
     # a private key either has a sibling .pub or carries a PEM/OpenSSH header
-    if [ -f "$f.pub" ] || head -1 "$f" 2>/dev/null | grep -q 'PRIVATE KEY'; then
+    if [ -f "$f.pub" ] || head -1 "$f" 2>/dev/null | ui_match_sub 'PRIVATE KEY'; then
       printf '%s\n' "$f"
     fi
   done
@@ -291,5 +291,5 @@ keys_agent_running() { [ -n "${SSH_AUTH_SOCK:-}" ] && ssh-add -l >/dev/null 2>&1
 keys_in_agent() {   # $1 key path -> 0 if its fingerprint is loaded
   local fp; fp="$(keys_fp "$1")"
   [ -n "$fp" ] || return 1
-  keys_agent_fingerprints | grep -qxF "$fp"
+  keys_agent_fingerprints | ui_match_line "$fp"
 }

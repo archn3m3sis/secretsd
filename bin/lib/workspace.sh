@@ -400,7 +400,7 @@ EOF
       char:s)
         tui_end
         local prof; prof="${W_NAME[$sel]}"
-        if profile_names | grep -qx "$prof"; then
+        if profile_names | ui_match_line "$prof"; then
           tui_page "SCOPED LAUNCH · $prof" "only this project's profile reaches the agent"
           ws_launch_scoped "${W_PATH[$sel]}" "$prof" "${W_NAME[$sel]}"
         else
@@ -891,7 +891,7 @@ ws_when_ago() {   # $1 epoch
   else printf '%dd ago' $(( d / 86400 )); fi
 }
 
-ws_is_adopted() { ws_session_ids | grep -qx "$1"; }
+ws_is_adopted() { ws_session_ids | ui_match_line "$1"; }
 
 # --- the screen ---------------------------------------------------------------
 ws_adopt_screen() {

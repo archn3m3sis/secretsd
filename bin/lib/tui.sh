@@ -57,6 +57,15 @@ tui_glyph() {
     env)      printf '⣏⣉⣹' ;;
     dns)      printf '⢾⣝⡷' ;;
     logins)   printf '⡴⣭⢦' ;;
+    alerts)   printf '⠈⣿⠁' ;;   keychain) printf '⠺⢽⣂' ;;
+    vaults)   printf '⣏⣿⣹' ;;   workspace) printf '⠙⣶⠋' ;;
+    inbox)    printf '⣠⣿⣄' ;;   sessions)  printf '⡴⠶⢦' ;;
+    pkm)      printf '⢾⣝⡷' ;;   posture)   printf '⣿⣿⡀' ;;
+    doctor)   printf '⠯⣿⠽' ;;   recovery)  printf '⣏⣿⣹' ;;
+    guard)    printf '⡱⠶⢎' ;;   monitor)   printf '⡴⠶⢦' ;;
+    broker)   printf '⠭⠪⠅' ;;   profiles)  printf '⡱⠶⢎' ;;
+    import)   printf '⠺⢽⣂' ;;   gen)       printf '⠭⠪⠅' ;;
+    yubikey)  printf '⡴⣭⢦' ;;   notes)     printf '⢾⣝⡷' ;;
     *)        printf '⠿⠿⠿' ;;
   esac
 }
@@ -66,7 +75,17 @@ tui_hue() {
     keys)     printf '%s' "$N_AMBER" ;;   auth)   printf '%s' "$N_VIOLET" ;;
     machines) printf '%s' "$N_GREEN" ;;   certs)  printf '%s' "$N_ORANGE" ;;
     env)      printf '%s' "$N_BLUE" ;;    dns)    printf '%s' "$N_TEAL" ;;
-    logins)   printf '%s' "$N_RED" ;;     *)      printf '%s' "$T_DIM" ;;
+    logins)   printf '%s' "$N_RED" ;;     alerts)   printf '%s' "$N_AMBER" ;;
+    keychain) printf '%s' "$N_BLUE" ;;    vaults)   printf '%s' "$N_CYAN" ;;
+    workspace) printf '%s' "$N_GREEN" ;;  inbox)    printf '%s' "$N_MAGENTA" ;;
+    sessions) printf '%s' "$N_BLUE" ;;    pkm)      printf '%s' "$N_VIOLET" ;;
+    posture)  printf '%s' "$N_RED" ;;     doctor)   printf '%s' "$N_ORANGE" ;;
+    recovery) printf '%s' "$N_RED" ;;     guard)    printf '%s' "$N_GREEN" ;;
+    monitor)  printf '%s' "$N_CYAN" ;;    broker)   printf '%s' "$N_TEAL" ;;
+    profiles) printf '%s' "$N_VIOLET" ;;  import)   printf '%s' "$N_TEAL" ;;
+    gen)      printf '%s' "$N_AMBER" ;;   yubikey)  printf '%s' "$N_AMBER" ;;
+    notes)    printf '%s' "$N_VIOLET" ;;
+    *)      printf '%s' "$T_DIM" ;;
   esac
 }
 
@@ -306,9 +325,19 @@ tui_menu() {
   TUI_CHOICE=0
   tui_begin >/dev/tty
 
+  # TUI_MENU_PANEL — pre-rendered, already-padded status lines drawn between the
+  # header and the choices. Screens used to draw a panel with tui_page/tui_kv and
+  # THEN call tui_menu, which repaints the whole screen over it: the panel only
+  # survived as scrollback behind the menu. One screen, one paint.
+  local pn=0
+  if [ -n "${TUI_MENU_PANEL:-}" ]; then
+    pn=$(( $(printf '%s\n' "$TUI_MENU_PANEL" | wc -l | tr -d ' ') + 1 ))
+  fi
+
   while :; do
     tui_dims
-    avail=$(( TUI_ROWS - 6 ))
+    avail=$(( TUI_ROWS - 6 - pn ))
+    [ "$avail" -lt "$n" ] && avail="$n"
     if [ $(( n * 2 )) -le "$avail" ]; then mode=detail; block=$(( n * 2 ))
     else                                   mode=plain;  block=$n
     fi
@@ -340,6 +369,11 @@ tui_menu() {
       printf '  %s%s%s' "$T_DIM" "$subtitle" "$T_RS"
       tui_padn "$TUI_COLS" $(( 2 + ${#subtitle} )); printf '\n'
       tui_hrule
+
+      if [ -n "${TUI_MENU_PANEL:-}" ]; then
+        printf '%s\n' "$TUI_MENU_PANEL"
+        tui_hrule
+      fi
 
       i=1
       for item in "$@"; do
@@ -408,17 +442,55 @@ tui_menu() {
 }
 
 # tui_page TITLE SUBTITLE — full-width titled page for non-menu output
+# tui_page TITLE [SUBTITLE]
+#
+# The header a drill-in screen wears. It used to be two bare printf lines, which
+# is why every secondary screen looked like a text dump next to the dashboard's
+# framed, full-bleed layout. Now it carries the same furniture: the module mark,
+# a gradient title, the host on the right, and a rule under it.
 tui_page() {
   tui_dims
   printf '\033[2J\033[H'
   tui_blank
-  printf '  %s%s%s%s' "$T_B" "$T_ACCENT" "$1" "$T_RS"
-  tui_padn "$TUI_COLS" $(( 2 + ${#1} )); printf '\n'
-  if [ -n "${2:-}" ]; then
-    printf '  %s%s%s' "$T_DIM" "$2" "$T_RS"
-    tui_padn "$TUI_COLS" $(( 2 + ${#2} )); printf '\n'
+
+  local title="$1" sub="${2:-}" host mark used
+  host="$(hostname -s 2>/dev/null || printf '')"
+  mark="${TUI_PAGE_MARK:-⣿⣿⣿}"
+
+  printf '  %s%s%s  ' "$T_ACCENT" "$mark" "$T_RS"
+  tui_grad_violet "$title"
+  used=$(( 2 + ${#mark} + 2 + ${#title} ))
+  if [ -n "$host" ] && [ $(( used + ${#host} + 4 )) -lt "$TUI_COLS" ]; then
+    tui_padn $(( TUI_COLS - ${#host} - 2 )) "$used"
+    printf '%s%s%s' "$T_DIM" "$host" "$T_RS"
+    used=$(( TUI_COLS - 2 ))
+  fi
+  tui_padn "$TUI_COLS" "$used"; printf '\n'
+
+  if [ -n "$sub" ]; then
+    sub="$(tui_fit "$sub" $(( TUI_COLS - 4 )))"
+    printf '  %s%s%s' "$T_MUTE" "$sub" "$T_RS"
+    tui_padn "$TUI_COLS" $(( 2 + ${#sub} )); printf '\n'
   fi
   tui_hrule
+  TUI_PAGE_MARK=""
+}
+
+# tui_pagefoot HINT… — close a page the way the dashboard closes: pad to the
+# bottom of the terminal, then a rule and a hint bar. Without this a short panel
+# leaves the rest of the screen as raw scrollback, which is most of why these
+# screens looked unfinished next to the home grid.
+tui_pagefoot() {
+  local used="${1:-0}"; shift 2>/dev/null || true
+  tui_dims
+  local pad=$(( TUI_ROWS - used - 2 ))
+  while [ "$pad" -gt 0 ]; do tui_blank; pad=$(( pad - 1 )); done
+  tui_hrule
+  local out="" h
+  for h in "$@"; do out="$out   $h"; done
+  out="$(tui_fit "$out" $(( TUI_COLS - 2 )))"
+  printf ' %s%s%s' "$T_DIM" "$out" "$T_RS"
+  tui_padn "$TUI_COLS" $(( 1 + ${#out} )); printf '\n'
 }
 
 # --- vibrant text ------------------------------------------------------------
@@ -533,16 +605,61 @@ tui_meter() {
 }
 
 # tui_kv LABEL VALUE [COLOUR] — a detail row with leader dots to the value
+# tui_kv KEY VALUE [COLOUR]
+#
+# Every value on a screen aligns on ONE column. The leader used to be measured
+# backwards from the VALUE's length, so a short value and a long one started in
+# different places and the whole panel read as ragged — the single thing that
+# makes a terminal report look unfinished.
+#
+# The value column is TUI_KVCOL (a fraction of the width, clamped), the leader
+# fills the gap, and anything too long is truncated rather than wrapped, because
+# a wrapped row breaks the absolute positioning every screen below it relies on.
 tui_kv() {
-  local k="$1" v="$2" c="${3:-$T_TEXT}" lead
-  lead=$(( TUI_COLS - 6 - ${#k} - ${#v} - 4 ))
+  local k="$1" v="$2" c="${3:-$T_TEXT}" kcol lead vmax
+  kcol="${TUI_KVCOL:-0}"
+  if [ "$kcol" -le 0 ]; then
+    kcol=$(( TUI_COLS / 3 ))
+    [ "$kcol" -lt 22 ] && kcol=22
+    [ "$kcol" -gt 40 ] && kcol=40
+  fi
+  k="$(tui_fit "$k" $(( kcol - 2 )))"
+  lead=$(( kcol - ${#k} - 1 ))
   [ "$lead" -lt 1 ] && lead=1
-  # A detail row is read left to right; on a very wide terminal an uncapped
-  # leader becomes two hundred dots and the value ends up in another postcode.
-  [ "$lead" -gt 60 ] && lead=60
+  vmax=$(( TUI_COLS - 6 - kcol - 2 ))
+  [ "$vmax" -lt 8 ] && vmax=8
+  v="$(tui_fit "$v" "$vmax")"
   printf '    %s%s %s' "$T_MUTE" "$k" "$T_LEAD"
   tui_repeat '·' "$lead"
-  printf ' %s%s%s\n' "$c" "$v" "$T_RS"
+  printf '  %s%s%s' "$c" "$v" "$T_RS"
+  tui_padn "$TUI_COLS" $(( 4 + ${#k} + 1 + lead + 2 + ${#v} )); printf '\n'
+}
+
+# tui_kvgroup — align a whole block to its OWN longest key instead of the
+# global column. Feed it "key<TAB>value<TAB>colour" lines on stdin. Screens with
+# a few short labels look cramped against a one-third-width column; this lets a
+# panel size itself.
+tui_kvgroup() {
+  local rows k v c w=0
+  rows="$(cat)"
+  while IFS="$(printf '\t')" read -r k v c; do
+    [ -n "$k" ] || continue
+    [ "${#k}" -gt "$w" ] && w="${#k}"
+  done <<KVG
+$rows
+KVG
+  w=$(( w + 3 ))
+  [ "$w" -lt 18 ] && w=18
+  [ "$w" -gt $(( TUI_COLS / 2 )) ] && w=$(( TUI_COLS / 2 ))
+  local old="${TUI_KVCOL:-0}"
+  TUI_KVCOL="$w"
+  while IFS="$(printf '\t')" read -r k v c; do
+    [ -n "$k" ] || continue
+    tui_kv "$k" "$v" "$c"
+  done <<KVG2
+$rows
+KVG2
+  TUI_KVCOL="$old"
 }
 
 # tui_badge TEXT STATE — a small inline status chip

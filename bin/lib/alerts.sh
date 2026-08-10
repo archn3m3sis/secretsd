@@ -232,10 +232,10 @@ alert_schedule_install() {   # $1 hour-of-day (0-23)
 PLIST
   launchctl unload "$ALERT_PLIST" >/dev/null 2>&1
   launchctl load   "$ALERT_PLIST" >/dev/null 2>&1
-  launchctl list 2>/dev/null | grep -q 'com.secretsd.alerts'
+  launchctl list 2>/dev/null | ui_match_sub 'com.secretsd.alerts'
 }
 
-alert_scheduled() { launchctl list 2>/dev/null | grep -q 'com.secretsd.alerts'; }
+alert_scheduled() { launchctl list 2>/dev/null | ui_match_sub 'com.secretsd.alerts'; }
 
 alert_schedule_remove() {
   launchctl unload "$ALERT_PLIST" >/dev/null 2>&1
@@ -243,9 +243,12 @@ alert_schedule_remove() {
   ! alert_scheduled
 }
 
+# The plist writes <key>Hour</key><integer>N</integer> on ONE line, so reading
+# the NEXT line (the obvious approach, and the first one here) always returned
+# empty and the screen showed "daily at :00".
 alert_schedule_hour() {
   [ -f "$ALERT_PLIST" ] || return 1
-  awk '/<key>Hour<\/key>/{getline; gsub(/[^0-9]/,""); print; exit}' "$ALERT_PLIST" 2>/dev/null
+  ui_plist_int "$ALERT_PLIST" Hour
 }
 
 # --- screen ------------------------------------------------------------------
@@ -308,33 +311,33 @@ alerts_screen() {
       soon="$(mon_field "$st" soon)";       unknown="$(mon_field "$st" unknown)"
     fi
 
-    tui_page "EXPIRY ALERTS" "it comes to you, instead of waiting to be asked"
-    printf '\n'
-    tui_kv "last checked" "${checked:-never}"
-    tui_kv "expired"      "${expired:-0}" "$([ "${expired:-0}" -gt 0 ] && printf '%s' "$T_ERR"  || printf '%s' "$T_OK")"
-    tui_kv "urgent (≤${ALERT_URGENT}d)" "${urgent:-0}"  "$([ "${urgent:-0}" -gt 0 ]  && printf '%s' "$T_WARN" || printf '%s' "$T_OK")"
-    tui_kv "soon (≤${ALERT_SOON}d)"     "${soon:-0}"    "$([ "${soon:-0}" -gt 0 ]    && printf '%s' "$T_WARN" || printf '%s' "$T_OK")"
-    tui_kv "expiry unknown"             "${unknown:-0}" "$T_DIM"
-    printf '\n'
-    if alert_scheduled; then
-      tui_kv "schedule" "daily at $(alert_schedule_hour):00 — verified loaded in launchctl" "$T_OK"
-    else
-      tui_kv "schedule" "not scheduled — nothing will remind you" "$T_WARN"
-    fi
-    [ -f "$ALERT_REPORT" ] && tui_kv "report" "$ALERT_REPORT" "$T_DIM"
-    printf '\n'
-    ui_note "This never rotates or renews anything. It reports, and keeps reporting."
-    printf '\n'
+    TUI_MENU_ICON=alerts
+    TUI_MENU_PANEL="$(
+      {
+        printf 'expired\t%s\t%s\n' "${expired:-0}" \
+          "$([ "${expired:-0}" -gt 0 ] && printf '%s' "$T_ERR"  || printf '%s' "$T_OK")"
+        printf 'urgent  (≤%sd)\t%s\t%s\n' "$ALERT_URGENT" "${urgent:-0}" \
+          "$([ "${urgent:-0}" -gt 0 ] && printf '%s' "$T_WARN" || printf '%s' "$T_OK")"
+        printf 'soon  (≤%sd)\t%s\t%s\n' "$ALERT_SOON" "${soon:-0}" \
+          "$([ "${soon:-0}" -gt 0 ] && printf '%s' "$T_WARN" || printf '%s' "$T_OK")"
+        printf 'no expiry recorded\t%s\t%s\n' "${unknown:-0}" \
+          "$([ "${unknown:-0}" -gt 0 ] && printf '%s' "$T_WARN" || printf '%s' "$T_OK")"
+        printf 'last checked\t%s\t%s\n' "${checked:-never}" "$T_MUTE"
+        if alert_scheduled; then
+          printf 'schedule\tdaily at %s:00, verified in launchctl\t%s\n' "$(alert_schedule_hour)" "$T_OK"
+        else
+          printf 'schedule\tnot scheduled — nothing will remind you\t%s\n' "$T_WARN"
+        fi
+      } | tui_kvgroup
+    )"
 
-    # tui_menu is TITLE, SUBTITLE, then "label|description" items, and it
-    # returns the LABEL. Its own summary line carries the state, because the
-    # menu repaints the screen over anything drawn above it.
+    # The subtitle is the one-line verdict; the panel below carries the numbers.
     local pick summary
-    if   [ "${expired:-0}" -gt 0 ]; then summary="$expired EXPIRED · $unknown with no recorded date"
-    elif [ "${urgent:-0}" -gt 0 ];  then summary="$urgent urgent · $soon soon · $unknown with no recorded date"
-    elif [ "${soon:-0}" -gt 0 ];    then summary="$soon due within $ALERT_SOON days · $unknown with no recorded date"
-    elif [ -n "$checked" ];         then summary="nothing due · $unknown with no recorded date · checked $checked"
-    else summary="never scanned"; fi
+    if   [ "${expired:-0}" -gt 0 ]; then summary="$expired expired — already broken, you have just not hit it yet"
+    elif [ "${urgent:-0}" -gt 0 ];  then summary="$urgent expiring within $ALERT_URGENT days"
+    elif [ "${soon:-0}" -gt 0 ];    then summary="$soon expiring within $ALERT_SOON days"
+    elif [ -n "$checked" ];         then summary="nothing expired and nothing due"
+    else summary="never scanned — nothing is watching this yet"; fi
 
     pick="$(tui_menu "EXPIRY ALERTS" "$summary" \
       "Scan now|read every certificate and recorded date, and say what is dying" \
@@ -370,13 +373,32 @@ alerts_screen() {
         fi
         printf '\n'; ui_pause ;;
       "Read the report")
-        if [ -f "$ALERT_REPORT" ]; then
-          ui_clear; printf '\n'
-          if command -v glow >/dev/null 2>&1; then glow -p "$ALERT_REPORT"
-          else sed 's/^/  /' "$ALERT_REPORT" | ${PAGER:-less -R}; fi
-        else
-          ui_warn "no report yet — run a scan first"; ui_pause
-        fi ;;
+        if [ ! -f "$ALERT_REPORT" ]; then
+          ui_warn "no report yet — run a scan first"; ui_pause; continue
+        fi
+        # Rendered, not dumped. Piping raw markdown into a pager shows the
+        # reader literal ## and ** and makes the program look unfinished at the
+        # exact moment it is delivering its most important output.
+        TUI_PAGE_MARK='⠈⣿⠁'
+        tui_page "EXPIRY REPORT" "${ALERT_REPORT#$SEC_ROOT/}"
+        printf '\n'
+        {
+          while IFS= read -r line; do
+            case "$line" in
+              '# '*)   ;;                                  # the page header already says this
+              '## '*)  printf '\n  %s%s%s\n' "$T_B$T_ACCENT" "${line#\#\# }" "$T_RS" ;;
+              '- '*)
+                line="${line#- }"
+                line="${line//\*\*/}"
+                printf '     %s•%s %s\n' "$T_LEAD" "$T_RS" "$(tui_fit "$line" $(( TUI_COLS - 8 )))" ;;
+              'Host: '*) printf '  %s%s%s\n' "$T_MUTE" "${line//\`/}" "$T_RS" ;;
+              '---')   ;;
+              '')      ;;
+              *)       printf '  %s%s%s\n' "$T_MUTE" "$(tui_fit "$line" $(( TUI_COLS - 4 )))" "$T_RS" ;;
+            esac
+          done < "$ALERT_REPORT"
+        } | ${PAGER:-less -R -F -X}
+        ;;
       "Schedule it daily")
         if [ "$(uname -s)" != "Darwin" ]; then
           ui_err "scheduling here is launchd, which is macOS only"

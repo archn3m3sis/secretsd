@@ -48,6 +48,35 @@ _gum() {
 
 ui_interactive() { [ -t 1 ] && [ -c /dev/tty ] 2>/dev/null; }
 
+# --- pipeline-safe matching ---------------------------------------------------
+#
+# `producer | grep -q PATTERN` is a trap in any script that sets `pipefail`:
+# grep exits the moment it matches, the producer is killed by SIGPIPE and exits
+# 141, and pipefail promotes that 141 to the pipeline's status — so a SUCCESSFUL
+# match is reported as a FAILURE.
+#
+# This is not theoretical. `launchctl list | grep -q com.secretsd.alerts` made
+# every single schedule install report "launchctl did not report the agent as
+# loaded" while the agent was, in fact, loaded and listed. The install worked;
+# only the proof of it lied, which is the worst possible way for a check to fail.
+#
+# awk reads stdin to EOF, so the producer always finishes and its status is 0.
+ui_match_line() { awk -v w="$1" '$0 == w        { f = 1 } END { exit !f }'; }  # exact line
+ui_match_sub()  { awk -v w="$1" 'index($0, w)   { f = 1 } END { exit !f }'; }  # substring
+ui_match_re()   { awk -v w="$1" '$0 ~ w         { f = 1 } END { exit !f }'; }  # regex
+
+# ui_plist_int PLIST KEY — read an <integer> value out of a launchd plist.
+# The plists here write <key>K</key><integer>N</integer> on ONE line, so the
+# obvious "match the key, then read the next line" returns empty every time and
+# the screen cheerfully reports "daily at :00".
+ui_plist_int() {
+  [ -f "$1" ] || return 1
+  local v
+  v="$(sed -n "s|.*<key>$2</key>[[:space:]]*<integer>\([0-9][0-9]*\)</integer>.*|\1|p" "$1" 2>/dev/null | head -1)"
+  [ -n "$v" ] || return 1
+  printf '%s' "$v"
+}
+
 # ui_needs_tty NAME [ALTERNATIVE...] — say why nothing happened, then fail.
 #
 # Every full-screen module used to be guarded by `ui_interactive || return 0`,

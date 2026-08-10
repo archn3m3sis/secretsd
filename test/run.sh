@@ -607,6 +607,62 @@ if want silence; then
                          || no "$hits silent tty guard(s) still present"
 fi
 
+
+# ==============================================================================
+# pipefail + grep -q — the false-failure class
+#
+# `producer | grep -q PAT` under `set -o pipefail`: grep exits on first match,
+# the producer dies of SIGPIPE with 141, pipefail promotes it, and a SUCCESSFUL
+# match is reported as a FAILURE. This made every launchd schedule install
+# report "launchctl did not report the agent as loaded" while the agent was
+# loaded and listed. The work succeeded; only the proof of it lied.
+# ==============================================================================
+if want pipefail; then
+  group "pipefail"
+
+  m="$(bash -c '
+    set -uo pipefail
+    . "'"$ROOT"'/bin/lib/ui.sh"
+    # a producer that keeps writing well past the pipe buffer
+    if seq 1 200000 | ui_match_line "7"; then echo "ok:$?"; else echo "bad:$?"; fi')"
+  case "$m" in ok:0) ok "ui_match_line survives a large producer under pipefail" ;;
+               *)    no "ui_match_line returned $m (SIGPIPE not handled)" ;; esac
+
+  m="$(bash -c '
+    set -uo pipefail
+    . "'"$ROOT"'/bin/lib/ui.sh"
+    if seq 1 200000 | ui_match_sub "1234"; then echo "ok:$?"; else echo "bad:$?"; fi')"
+  case "$m" in ok:0) ok "ui_match_sub survives a large producer under pipefail" ;;
+               *)    no "ui_match_sub returned $m" ;; esac
+
+  # and it must still report a genuine miss as a miss
+  bash -c '
+    set -uo pipefail
+    . "'"$ROOT"'/bin/lib/ui.sh"
+    seq 1 100 | ui_match_line "nope"' && no "ui_match_line matched something absent" \
+                                      || ok "a genuine non-match still returns non-zero"
+
+  # demonstrate the trap is real, so this test is evidence and not decoration
+  m="$(bash -c 'set -uo pipefail; seq 1 200000 | grep -q "^7$"; echo $?')"
+  [ "$m" != "0" ] && ok "the old grep -q form does fail here (exit $m) — the trap is real" \
+                  || skip "grep -q trap" "did not reproduce on this platform"
+
+  # no piped grep -q with a process producer may remain in the source
+  hits="$(grep -rn '| *grep -q' "$ROOT/bin" 2>/dev/null \
+          | grep -vE ':[0-9]+: *#' | grep -v 'printf ' | grep -c . || true)"
+  [ "${hits:-0}" = "0" ] && ok "no piped grep -q with a process producer remains" \
+                         || no "$hits piped grep -q call(s) still present"
+
+  # the launchd plist reader must handle key and value on ONE line
+  m="$(bash -c '
+    . "'"$ROOT"'/bin/lib/ui.sh"
+    f="$(mktemp)"
+    printf "<dict><key>Hour</key><integer>17</integer></dict>\n" > "$f"
+    ui_plist_int "$f" Hour; rm -f "$f"')"
+  [ "$m" = "17" ] && ok "the plist reader handles key and value on one line" \
+                  || no "plist reader returned [$m], expected 17"
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"

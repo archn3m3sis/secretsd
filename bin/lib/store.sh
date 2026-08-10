@@ -97,7 +97,7 @@ MODS
 sec_module_field() { # $1 id  $2 field-number
   sec_modules | awk -F'|' -v id="$1" -v f="$2" '$1==id {print $f}'
 }
-sec_module_exists() { sec_modules | cut -d'|' -f1 | grep -qx "$1"; }
+sec_module_exists() { sec_modules | cut -d'|' -f1 | ui_match_line "$1"; }
 sec_module_state()  { sec_module_field "$1" 6; }
 sec_module_label()  { sec_module_field "$1" 3; }
 sec_module_icon()   { sec_module_field "$1" 2; }
@@ -130,7 +130,7 @@ for k in sorted(d):
 sec_names_have_python() { command -v python3 >/dev/null 2>&1; }
 
 sec_count()   { sec_names "${1:-$SEC_STORE}" | grep -c . ; }
-sec_has()     { sec_names "${2:-$SEC_STORE}" | grep -qx "$1"; }
+sec_has()     { sec_names "${2:-$SEC_STORE}" | ui_match_line "$1"; }
 sec_valid_name() { printf '%s' "$1" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$'; }
 
 # sec_multiline_names — STORE key names whose value contains a newline.

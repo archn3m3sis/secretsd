@@ -29,10 +29,10 @@ imp_detect() {
   [ -f "$f" ] || { [ -d "$f" ] && { printf 'pass-store'; return 0; }; return 1; }
 
   # JSON exports
-  if head -c 2000 "$f" | grep -q '"items"' && head -c 2000 "$f" | grep -q '"login"'; then
+  if head -c 2000 "$f" | ui_match_sub '"items"' && head -c 2000 "$f" | ui_match_sub '"login"'; then
     printf 'bitwarden-json'; return 0
   fi
-  if head -c 2000 "$f" | grep -q '"vaultUuid"\|"secureContents"'; then
+  if head -c 2000 "$f" | ui_match_re '"vaultUuid"|"secureContents"'; then
     printf '1password-1pif'; return 0
   fi
 

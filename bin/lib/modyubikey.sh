@@ -173,7 +173,7 @@ seed="$(eval "printf '%s' \"\${$YK_SRC}\"")"
 printf '%s' "$seed" | ykman oath accounts add -t "$YK_LABEL" - >/dev/null 2>&1 || exit 4
 YKM
           if YK_SRC="$src" YK_LABEL="$label" "$SEC_SELF" run --only "$src" -- bash "$mv"; then
-            if yk_oath_accounts | grep -qF "$label"; then
+            if yk_oath_accounts | ui_match_sub "$label"; then
               ui_ok "verified: '$label' is now on the key"
               if ui_confirm "Delete the vault copy of '$src' now?"; then
                 sec_unset "$src" && ui_ok "removed from the vault — the seed is hardware-only"

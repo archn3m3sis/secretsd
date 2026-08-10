@@ -208,9 +208,9 @@ PLIST
   chmod 600 "$MON_PLIST"
   launchctl unload "$MON_PLIST" >/dev/null 2>&1
   launchctl load "$MON_PLIST" >/dev/null 2>&1
-  launchctl list 2>/dev/null | grep -q 'com.secretsd.monitor'
+  launchctl list 2>/dev/null | ui_match_sub 'com.secretsd.monitor'
 }
-mon_scheduled() { launchctl list 2>/dev/null | grep -q 'com.secretsd.monitor'; }
+mon_scheduled() { launchctl list 2>/dev/null | ui_match_sub 'com.secretsd.monitor'; }
 mon_schedule_remove() {
   launchctl unload "$MON_PLIST" >/dev/null 2>&1
   rm -f "$MON_PLIST"
@@ -224,19 +224,26 @@ monitor_screen() {
 
   local act sched
   while :; do
-    mon_scheduled && sched="running every $(( $(grep -A1 StartInterval "$MON_PLIST" 2>/dev/null | grep -oE '[0-9]+' | tail -1) / 60 )) minutes" || sched="not scheduled"
+    if mon_scheduled; then
+      sched="running every $(( $(ui_plist_int "$MON_PLIST" StartInterval || echo 3600) / 60 )) minutes"
+    else sched="not scheduled"; fi
 
-    tui_page "THE MONITOR" "walks your sessions and restarts the ones that stalled"
-    tui_kv "schedule" "$sched" "$(mon_scheduled && printf '%s' "$T_OK" || printf '%s' "$T_DIM")"
-    tui_kv "nudge limit per session" "$MON_MAX_NUDGES"
-    [ -f "$MON_LOG" ] && tui_kv "log entries" "$(wc -l < "$MON_LOG" | tr -d ' ')"
-    printf '\n'
-    printf '   %sIt only nudges sessions that stopped on something they could have made\n' "$T_MUTE"
-    printf '   an educated guess about. A session genuinely waiting on you — a password,\n'
-    printf '   a physical action, a decision with no default — is left alone.%s\n' "$T_RS"
-    printf '\n'
+    # One paint: the panel rides inside the menu. Drawing it first with tui_page
+    # only left it behind in scrollback, because tui_menu repaints the screen.
+    TUI_MENU_ICON=monitor
+    TUI_MENU_PANEL="$(
+      {
+        printf 'schedule\t%s\t%s\n' "$sched" \
+          "$(mon_scheduled && printf '%s' "$T_OK" || printf '%s' "$T_WARN")"
+        printf 'nudge limit per session\t%s\t%s\n' "$MON_MAX_NUDGES" "$T_TEXT"
+        [ -f "$MON_LOG" ] && printf 'nudges sent\t%s\t%s\n' \
+          "$(grep -c NUDGED "$MON_LOG" 2>/dev/null || true)" "$T_TEXT"
+        [ -f "$MON_LOG" ] && printf 'log entries\t%s\t%s\n' \
+          "$(wc -l < "$MON_LOG" | tr -d ' ')" "$T_MUTE"
+      } | tui_kvgroup
+    )"
 
-    act="$(tui_menu "MONITOR" "$sched" \
+    act="$(tui_menu "THE MONITOR" "only nudges what stalled — never what is waiting on you" \
       "Sweep now|classify recent sessions and nudge the stalled ones" \
       "Schedule it|run the sweep automatically on an interval" \
       "Stop the schedule|remove the launchd agent" \

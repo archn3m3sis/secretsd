@@ -209,19 +209,25 @@ recovery_screen() {
   trap 'REC_PASS=""' RETURN
   local keyfile="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"
 
-  tui_page "RECOVERY KIT" "the one failure nobody plans for"
-  printf '\n'
-  tui_kv "identity"     "$keyfile" "$([ -f "$keyfile" ] && printf '%s' "$T_OK" || printf '%s' "$T_ERR")"
-  tui_kv "stores"       "$(ls "$SEC_SECRETS"/*.enc.* "$SEC_ENC_DIR"/*.enc.* 2>/dev/null | sec_nlines) encrypted file(s)"
-  tui_kv "credentials"  "$(sec_count 2>/dev/null || echo '?')"
-  printf '\n'
-  printf '   %sEverything above is encrypted to ONE key, in ONE file. If that file is\n' "$T_MUTE"
-  printf '   lost, every credential becomes permanently unreadable. There is no\n'
-  printf '   recovery path, by design — that is what makes the encryption worth having.%s\n' "$T_RS"
-  printf '\n'
+  # One paint — the panel rides inside the menu rather than being drawn first
+  # and immediately repainted over.
+  TUI_MENU_ICON=recovery
+  TUI_MENU_PANEL="$(
+    {
+      printf 'age identity\t%s\t%s\n' "${keyfile/#$HOME/\~}" \
+        "$([ -f "$keyfile" ] && printf '%s' "$T_OK" || printf '%s' "$T_ERR")"
+      printf 'encrypted stores\t%s file(s)\t%s\n' \
+        "$(ls "$SEC_SECRETS"/*.enc.* "$SEC_ENC_DIR"/*.enc.* 2>/dev/null | sec_nlines)" "$T_TEXT"
+      printf 'credentials at risk\t%s\t%s\n' "$(sec_count 2>/dev/null || echo '?')" "$T_TEXT"
+      printf 'kits on disk\t%s\t%s\n' \
+        "$(ls "$HOME"/Documents/secretsd-recovery-*.age 2>/dev/null | sec_nlines)" \
+        "$([ "$(ls "$HOME"/Documents/secretsd-recovery-*.age 2>/dev/null | sec_nlines)" -gt 0 ] \
+           && printf '%s' "$T_OK" || printf '%s' "$T_ERR")"
+    } | tui_kvgroup
+  )"
 
   local act
-  act="$(tui_menu "RECOVERY" "a backup you have not restored is a rumour" \
+  act="$(tui_menu "RECOVERY KIT" "one key, one file — lose it and every credential is gone" \
     "Build a kit, then prove it restores|encrypt to a passphrase, then actually restore it" \
     "Verify an existing kit|restore a kit you already have, without changing anything" \
     "Where should it live|guidance, not an action" \

@@ -76,7 +76,7 @@ vault_recipient_hosts() {
   onfile="$(sec_file_recipients "$1")"
   while IFS='|' read -r host key; do
     [ -n "$key" ] || continue
-    printf '%s\n' "$onfile" | grep -qx "$key" && printf '%s\n' "$host"
+    printf '%s\n' "$onfile" | ui_match_line "$key" && printf '%s\n' "$host"
   done <<EOF
 $(vault_hosts)
 EOF
