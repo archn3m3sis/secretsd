@@ -101,11 +101,15 @@ ui_ask() { # $1 prompt  $2 placeholder -> echoes input; nonzero on cancel
 }
 
 ui_ask_secret() { # $1 prompt -> echoes hidden input; nonzero on cancel
-  if ui_has_gum; then
-    gum input --password --prompt "$1 › " --prompt.foreground $UI_ACCENT
-  elif ui_interactive; then
-    local v; printf '%s%s (hidden):%s ' "$UI_B" "$1" "$UI_RS" >&2
-    ui_read_secret v || return 1; printf '\n' >&2; printf '%s' "$v"
+  # gum's password mode shows nothing at all, which is the confusing behaviour
+  # we are trying to remove — so we always use our own masked reader when there
+  # is a terminal, and fall back to a plain read only for piped input.
+  if ui_interactive; then
+    local v=""
+    printf '  %s%s%s ' "$UI_B" "$1" "$UI_RS" > /dev/tty
+    ui_read_masked v || return 1
+    printf '%s' "$v"
+    v=""
   else
     local v; IFS= read -r v || return 1; printf '%s' "$v"   # piped input (scripts, tests)
   fi
@@ -184,3 +188,42 @@ ui_pause() {
 }
 
 ui_clear() { ui_interactive && printf '\033[2J\033[H'; }
+
+# --- masked secret input ------------------------------------------------------
+# Reading a secret with no echo at all is the Unix default and it is a bad one:
+# you cannot tell whether a keystroke registered, whether caps lock is on, or how
+# much you have typed. Every user hesitates, retypes, and gets it wrong.
+#
+# This echoes one • per character, handles backspace, and never puts the value in
+# a variable that survives the call. It is still not shown in the clear.
+ui_read_masked() {   # $1 = variable name to set
+  local __var="$1" __s="" __c __mask
+  # stty -echo so the terminal does not print, then we draw the mask ourselves
+  local __old; __old="$(stty -g </dev/tty 2>/dev/null)"
+  stty -echo </dev/tty 2>/dev/null
+  while IFS= read -r -s -n 1 __c </dev/tty 2>/dev/null; do
+    case "$__c" in
+      '') break ;;                                   # enter
+      $'\177'|$'\b')                                 # backspace / delete
+        if [ -n "$__s" ]; then
+          __s="${__s%?}"
+          printf '\b \b' > /dev/tty
+        fi ;;
+      $'\003') stty "$__old" </dev/tty 2>/dev/null; printf '\n' >/dev/tty; return 1 ;;   # ctrl-c
+      *) __s="$__s$__c"; printf '%s' '•' > /dev/tty ;;
+    esac
+  done
+  stty "$__old" </dev/tty 2>/dev/null
+  printf '\n' > /dev/tty
+  printf -v "$__var" '%s' "$__s"
+  __s=""
+  return 0
+}
+
+# ui_ask_masked PROMPT VARNAME — prompt, read masked, show the length typed
+ui_ask_masked() {
+  local prompt="$1" var="$2"
+  printf '  %s%s%s ' "$T_B" "$prompt" "$T_RS" > /dev/tty
+  ui_read_masked "$var" || return 1
+  return 0
+}

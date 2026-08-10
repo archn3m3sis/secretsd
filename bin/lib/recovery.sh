@@ -48,6 +48,47 @@ rec_kit_manifest() {
   printf '  secretsd check\n'
 }
 
+
+# rec_ask_passphrase VARNAME — our own prompt, with visible masking, a confirm
+# step, and a strength read. age's own prompt echoes nothing at all, which is
+# precisely the behaviour that makes people mistype the one passphrase they
+# cannot afford to mistype.
+rec_ask_passphrase() {
+  local __var="$1" a="" b="" bits
+  while :; do
+    printf '\n'
+    ui_ask_masked "Passphrase" a || return 1
+    if [ -z "$a" ]; then
+      ui_err "empty — a kit with no passphrase is a plain archive"
+      continue
+    fi
+    if [ "${#a}" -lt 12 ]; then
+      ui_warn "${#a} characters. This is the only thing standing between a thief and every credential you own."
+      ui_confirm "Use it anyway?" || { a=""; continue; }
+    fi
+    ui_ask_masked "Confirm   " b || return 1
+    if [ "$a" != "$b" ]; then
+      ui_err "they do not match — try again"
+      a=""; b=""
+      continue
+    fi
+    break
+  done
+  bits=$(( ${#a} * 4 ))
+  printf '\n'
+  tui_kv "length" "${#a} characters"
+  printf '    %sstrength%s  ' "$T_MUTE" "$T_RS"
+  tui_meter "$([ "$bits" -gt 160 ] && echo 160 || echo "$bits")" 160 30
+  printf '\n'
+  printf -v "$__var" '%s' "$a"
+  a=""; b=""
+  return 0
+}
+
+# rec_age_encrypt SRC DST PASS — passphrase via stdin, never argv or environment
+rec_age_encrypt() { printf '%s\n' "$3" | python3 "$SEC_BIN/lib/agepty.py" encrypt "$1" "$2"; }
+rec_age_decrypt() { printf '%s\n' "$3" | python3 "$SEC_BIN/lib/agepty.py" decrypt "$1" "$2"; }
+
 # rec_build DEST — build a kit, then restore it to prove it. Echoes the path.
 rec_build() {
   local dest="$1" stage="$TMPD/kit" kit tarball
@@ -90,11 +131,23 @@ rec_build() {
 
   kit="$dest/secretsd-recovery-$(date +%Y%m%d-%H%M%S).age"
   mkdir -p "$dest" 2>/dev/null
-  if ! age --passphrase -o "$kit" "$tarball" </dev/tty; then
-    rm -f "$kit" "$tarball"; rm -rf "$stage"
-    ui_err "encryption failed or was cancelled — no kit was written"
+  local __pass=""
+  if ! rec_ask_passphrase __pass; then
+    rm -f "$tarball"; rm -rf "$stage"
+    ui_info "cancelled — no kit was written"
     return 1
   fi
+  printf '\n'
+  ui_info "encrypting…"
+  if ! rec_age_encrypt "$tarball" "$kit" "$__pass"; then
+    __pass=""
+    rm -f "$kit" "$tarball"; rm -rf "$stage"
+    ui_err "encryption failed — no kit was written"
+    return 1
+  fi
+  # hand the same passphrase to the verify step so you type it once, not twice
+  REC_PASS="$__pass"
+  __pass=""
   chmod 600 "$kit"
   rm -f "$tarball"; rm -rf "$stage"
   printf '%s' "$kit"
@@ -106,11 +159,19 @@ rec_verify() {
   local kit="$1" work="$TMPD/verify" out
   rm -rf "$work"; mkdir -p "$work"; chmod 700 "$work"
 
-  ui_info "decrypting the kit (you will be asked for the passphrase again)"
-  if ! age -d -o "$work/kit.tar" "$kit" </dev/tty; then
+  local __p="${REC_PASS:-}"
+  if [ -z "$__p" ]; then
+    ui_note "Enter the passphrase for this kit."
+    rec_ask_passphrase_single __p || return 1
+  else
+    ui_info "decrypting with the passphrase you just set…"
+  fi
+  if ! rec_age_decrypt "$kit" "$work/kit.tar" "$__p"; then
+    __p=""
     ui_err "the kit did not decrypt with that passphrase"
     return 1
   fi
+  __p=""
   ( cd "$work" && tar xf kit.tar ) || { ui_err "the archive is corrupt"; return 1; }
   rm -f "$work/kit.tar"
 
@@ -136,6 +197,8 @@ rec_verify() {
 
 recovery_screen() {
   ui_interactive || return 0
+  REC_PASS=""
+  trap 'REC_PASS=""' RETURN
   local keyfile="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"
 
   tui_page "RECOVERY KIT" "the one failure nobody plans for"
@@ -189,6 +252,7 @@ recovery_screen() {
       printf '   %sA kit that has never been restored is not a backup. Restoring it now,\n' "$T_DIM"
       printf '   into a throwaway directory, using only what is inside the kit.%s\n\n' "$T_RS"
       if rec_verify "$kit"; then
+        REC_PASS=""   # the passphrase does not outlive the verification
         printf '\n'
         ui_ok "this kit is real — it was built and restored end to end"
         sec_log_start recovery; sec_log "kit built and verified: $kit"
@@ -200,6 +264,7 @@ recovery_screen() {
         printf '   %s· the passphrase written down somewhere physical and separate again%s\n' "$T_MUTE" "$T_RS"
       else
         printf '\n'
+        REC_PASS=""
         ui_err "the kit did NOT restore — deleting it"
         ui_note "A kit that cannot be restored is worse than none: it stops you"
         ui_note "looking for a real one. Nothing has been kept."
@@ -235,5 +300,16 @@ recovery_screen() {
       printf '   %s· with the passphrase in the same place, which makes it a plain archive%s\n' "$T_MUTE" "$T_RS"
       ui_pause ;;
   esac
+  return 0
+}
+
+# rec_ask_passphrase_single VARNAME — one masked prompt, no confirm (for verify)
+rec_ask_passphrase_single() {
+  local __var="$1" a=""
+  printf '\n'
+  ui_ask_masked "Passphrase" a || return 1
+  [ -n "$a" ] || { ui_err "empty"; return 1; }
+  printf -v "$__var" '%s' "$a"
+  a=""
   return 0
 }
