@@ -238,7 +238,7 @@ BRK
 
   draw_brks() {
     tui_home
-    tui_header "$host" "$n session(s) · $marked marked · merge is additive, originals are never modified"
+    tui_header "$host" "$n session(s) · $marked marked · merge is additive, originals are never modified" "SESSION BROKER" broker
     curline=4
     local shown=0 maxrows start=0
     maxrows=$(( (TUI_ROWS - 6) / 3 )); [ "$maxrows" -lt 1 ] && maxrows=1
@@ -532,7 +532,7 @@ JANL
   }
   draw_js() {
     tui_home
-    tui_header "$host" "$rc recommendation(s) · you decide each one"
+    tui_header "$host" "$rc recommendation(s) · you decide each one" "SESSION JANITOR" broker
     curline=4
     local shown=0 maxrows start2=0 i2
     maxrows=$(( (TUI_ROWS - 6) / 3 )); [ "$maxrows" -lt 1 ] && maxrows=1

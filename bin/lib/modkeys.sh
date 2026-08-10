@@ -140,7 +140,7 @@ KEYS
 
   draw_keys() {
     tui_home
-    tui_header "$host" "$n key(s) · $nopass without a passphrase · $nagent loaded in the agent · $ngap config gap(s)"
+    tui_header "$host" "$n key(s) · $nopass without a passphrase · $nagent loaded in the agent · $ngap config gap(s)" "SSH KEYS" keys
     curline=4
     i=0
     while [ "$i" -lt "$n" ]; do

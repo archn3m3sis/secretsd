@@ -80,7 +80,7 @@ AUD
 
   draw_audit() {
     tui_home
-    tui_header "$host" "$n recorded action(s) · names and verbs only, never values"
+    tui_header "$host" "$n recorded action(s) · names and verbs only, never values" "AUDIT TRAIL" audit
     curline=4
     local shown=0 maxrows
     maxrows=$(( (TUI_ROWS - 6) / 3 ))

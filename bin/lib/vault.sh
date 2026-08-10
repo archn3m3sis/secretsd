@@ -254,9 +254,21 @@ vault_encryption() {
   local path="$1" name; name="$(vault_name "$path")"
   local act
   while :; do
-    TUI_MENU_ICON=""
+    TUI_MENU_ICON=vaults
+    TUI_MENU_PANEL="$(
+      {
+        local _nc _nf
+        _nc="$(sec_config_recipients 2>/dev/null | sec_nlines)"
+        _nf="$(sec_file_recipients "$path" 2>/dev/null | sec_nlines)"
+        printf 'store\t%s\t%s\n' "${path#$SEC_ROOT/}" "$T_TEXT"
+        printf 'recipients on the file\t%s\t%s\n' "$_nf" "$T_TEXT"
+        printf 'recipients declared\t%s\t%s\n' "$_nc" "$T_TEXT"
+        if [ "$_nc" = "$_nf" ]; then printf 'drift\tnone — the file matches .sops.yaml\t%s\n' "$T_OK"
+        else printf 'drift\tDECLARED AND ACTUAL DISAGREE — re-key\t%s\n' "$T_ERR"; fi
+      } | tui_kvgroup
+    )"
     act="$(tui_menu "ENCRYPTION · $name" \
-      "$(sec_file_recipients "$path" | sec_nlines) age recipient(s) · SOPS + age" \
+      "who can decrypt this store, and whether that matches what you declared" \
       "Re-key to .sops.yaml|rewrite key material to the declared recipients; values unchanged" \
       "Verify this host can decrypt|prove the age key here still opens it" \
       "Show who can open it|hosts with a key on this file, and hosts without" \

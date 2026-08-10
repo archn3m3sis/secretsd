@@ -280,14 +280,17 @@ notes_screen() {
 
   local act doc title tags where
   while :; do
-    tui_page "PUBLISH TO NOTES" "$(notes_target_desc)"
-    printf '\n'
-    tui_kv "system"      "$sys"
-    tui_kv "destination" "$(notes_target_desc)"
-    tui_kv "contains"    "names, purposes, relationships — never a value" "$T_OK"
-    printf '\n'
+    TUI_MENU_ICON=notes
+    TUI_MENU_PANEL="$(
+      {
+        printf 'note system\t%s\t%s\n' "$sys" "$T_TEXT"
+        printf 'destination\t%s\t%s\n' "$(notes_target_desc)" "$T_TEXT"
+        printf 'contains\tnames, purposes, relationships\t%s\n' "$T_OK"
+        printf 'never contains\ta credential value, redacted at publish time\t%s\n' "$T_OK"
+      } | tui_kvgroup
+    )"
 
-    act="$(tui_menu "PUBLISH" "notes carry no secret values, which is what makes them safe to sync" \
+    act="$(tui_menu "PUBLISH TO NOTES" "no secret values leave the vault — that is what makes this safe to sync" \
       "Credential inventory|every credential by name, with purpose and expiry" \
       "Access map|SSH keys, which hosts use them, and every configured host" \
       "Security posture|current findings, so the vault records what needed fixing" \

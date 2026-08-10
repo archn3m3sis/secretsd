@@ -153,10 +153,21 @@ tui_readkey() {
 
 # --- header -------------------------------------------------------------------
 # tui_header HOST STATLINE
+# tui_header HOST STATLINE [TITLE] [MODULE-ID]
+#
+# Only the home grid is "S E C R E T S". Every other screen used to wear that
+# same wordmark, which meant nine different modules all introduced themselves
+# with the program's name and buried what you were actually looking at in the
+# subtitle. Pass a title and the screen says what it is.
 tui_header() {
-  local host="$1" stat="$2" wm="S E C R E T S"
+  local host="$1" stat="$2" wm="${3:-S E C R E T S}" modid="${4:-}"
+  local mark='⣿⣿⣿'
+  [ -n "$modid" ] && mark="$(tui_glyph "$modid")"
   tui_blank
-  printf '  '; tui_grad_violet '⣿⣿⣿'; printf '  %s' "$T_B"; tui_grad_violet "$wm"
+  printf '  '
+  if [ -n "$modid" ]; then printf '%s%s%s' "$(tui_hue "$modid")" "$mark" "$T_RS"
+  else tui_grad_violet "$mark"; fi
+  printf '  %s' "$T_B"; tui_grad_violet "$wm"
   tui_padn "$TUI_COLS" $(( 2 + 3 + 2 + ${#wm} + ${#host} + 2 ))
   printf '%s%s%s  \n' "$T_DIM" "$host" "$T_RS"
   printf '  %s' "$T_MUTE"

@@ -127,7 +127,7 @@ CERTS
 
   draw_certs() {
     tui_home
-    tui_header "$host" "$n certificate file(s) · $nexp expired · $nsoon within 30 days · parsed from the certs"
+    tui_header "$host" "$n certificate file(s) · $nexp expired · $nsoon within 30 days · parsed from the certs" "CERTIFICATES" certs
     curline=4
     i=0
     while [ "$i" -lt "$n" ]; do

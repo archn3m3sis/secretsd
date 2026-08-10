@@ -387,7 +387,9 @@ $prefix$collected" --output-format text 2>/dev/null)"
 # --- the screen ---------------------------------------------------------------
 profiles_screen() {
   ui_interactive || { ui_needs_tty profiles; return 1; }
-  broker_have || { tui_page "SESSION PROFILES" "claude CLI not on PATH"; ui_pause; return 0; }
+  broker_have || { TUI_PAGE_MARK="$(tui_glyph profiles)"
+                   tui_page "SESSION PROFILES" "the claude CLI is not on PATH — these profiles drive it"
+                   ui_pause; return 0; }
 
   local -a P_ID P_TITLE P_BLURB P_GLYPH P_HUEV P_LINE
   local n=0 id glyph huev title blurb
@@ -414,7 +416,7 @@ PL
   }
   draw_profs() {
     tui_home
-    tui_header "$host" "$n profile(s) · each surveys your sessions and writes a report · nothing is changed"
+    tui_header "$host" "$n profile(s) · each surveys your sessions and writes a report · nothing is changed" "SESSION PROFILES" profiles
     curline=4
     i=0
     while [ "$i" -lt "$n" ]; do

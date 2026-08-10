@@ -117,7 +117,8 @@ $(prov_keys)
 EOF
 
   if [ "$n" -eq 0 ]; then
-    tui_page "INBOX" "credentials an agent created for you"
+    TUI_PAGE_MARK="$(tui_glyph inbox)"
+    tui_page "AGENT INBOX" "credentials an agent created for you — nothing here yet"
     printf '\n'
     printf '   %sNothing yet.%s\n\n' "$T_MUTE" "$T_RS"
     printf '   %sWhen an agent needs a credential while working a project, it generates one\n' "$T_DIM"
@@ -166,7 +167,7 @@ EOF
 
   draw_inbox() {
     tui_home
-    tui_header "$host" "$n credential(s) authored by agents · $unseen unread · values never left this machine"
+    tui_header "$host" "$n credential(s) authored by agents · $unseen unread · values never left this machine" "AGENT INBOX" inbox
     curline=4
     i=0
     while [ "$i" -lt "$n" ]; do

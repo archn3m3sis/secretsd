@@ -165,7 +165,7 @@ EOF
 
   draw_pkm() {
     tui_home
-    tui_header "$host" "bridging the secure informational gap between man and machine"
+    tui_header "$host" "bridging the secure informational gap between man and machine" "KNOWLEDGE SYSTEM" pkm
     curline=4
     printf '  %s%sKNOWLEDGE SYSTEM%s' "$T_B" "$T_ACCENT" "$T_RS"
     tui_padn "$TUI_COLS" 18; printf '\n'

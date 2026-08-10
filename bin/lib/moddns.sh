@@ -114,7 +114,7 @@ ZONES
 
   draw_zones() {
     tui_home
-    tui_header "$host" "$n zone(s) · token injected per call, never exported"
+    tui_header "$host" "$n zone(s) · token injected per call, never exported" "DOMAINS" dns
     curline=4
     i=0
     while [ "$i" -lt "$n" ]; do
@@ -163,7 +163,7 @@ RECS
     }
     draw_recs_z() {
       tui_home
-      tui_header "$host" "$zn · $m record(s) · writes show a before/after diff and ask"
+      tui_header "$host" "$zn · $m record(s) · writes show a before/after diff and ask" "DNS RECORDS" dns
       rcurline=4
       j=0
       while [ "$j" -lt "$m" ]; do

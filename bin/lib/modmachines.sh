@@ -94,7 +94,7 @@ HOSTS
 
   draw_machines() {
     tui_home
-    tui_header "$host" "$n host(s) from ~/.ssh/config · $nbad with a missing key · probes are TCP only, never auth"
+    tui_header "$host" "$n host(s) from ~/.ssh/config · $nbad with a missing key · probes are TCP only, never auth" "MACHINES" machines
     curline=4
     i=0
     while [ "$i" -lt "$n" ]; do

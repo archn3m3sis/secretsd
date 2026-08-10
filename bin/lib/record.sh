@@ -174,7 +174,7 @@ RECS
 
   draw_recs() {
     tui_home
-    tui_header "$host" "$n record(s) · $subtitle"
+    tui_header "$host" "$n record(s) · $subtitle" "$(printf %s "$title" | tr "[:lower:]" "[:upper:]")" "$mid"
     curline=4
     i=0
     while [ "$i" -lt "$n" ]; do

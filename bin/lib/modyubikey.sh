@@ -96,7 +96,7 @@ OATH
 
   draw_yk() {
     tui_home
-    tui_header "$host" "$(tui_fit "$dev" 60) · serial $serial · firmware $fw"
+    tui_header "$host" "$(tui_fit "$dev" 60) · serial $serial · firmware $fw" "YUBIKEY" yubikey
     curline=4
     if [ "$n" -eq 0 ]; then
       printf '  %sno OATH accounts on this key%s' "$T_DIM" "$T_RS"

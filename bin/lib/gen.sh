@@ -86,9 +86,16 @@ gen_screen() {
   ui_interactive || { ui_needs_tty gen; return 1; }
   local kind len value name bits setsize
 
-  tui_page "GENERATE" "the value goes straight into the vault — it is never printed"
+  TUI_MENU_ICON=gen
+  TUI_MENU_PANEL="$(
+    {
+      printf 'destination\t%s credential(s) in the vault\t%s\n' "$(sec_count 2>/dev/null || echo '?')" "$T_TEXT"
+      printf 'entropy source\t/dev/urandom, rejection-sampled\t%s\n' "$T_OK"
+      printf 'ever printed\tno — the value goes straight into the store\t%s\n' "$T_OK"
+    } | tui_kvgroup
+  )"
 
-  kind="$(tui_menu "GENERATE A CREDENTIAL" "nothing is echoed to your terminal" \
+  kind="$(tui_menu "GENERATE A CREDENTIAL" "nothing is echoed to your terminal, at any point" \
     "Password (letters, digits, symbols)|32 chars · uniform, unbiased · ~200 bits" \
     "Password (alphanumeric only)|for systems that reject symbols" \
     "Passphrase (words)|easier to type on a console or phone" \

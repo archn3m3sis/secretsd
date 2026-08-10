@@ -326,7 +326,7 @@ POSTURE
 
   draw_posture() {
     tui_home
-    tui_header "$host" "$n finding(s) · $ncrit critical · $nhigh high · nothing is changed without you"
+    tui_header "$host" "$n finding(s) · $ncrit critical · $nhigh high · nothing is changed without you" "SECURITY POSTURE" posture
     curline=4
     i=0
     while [ "$i" -lt "$n" ]; do

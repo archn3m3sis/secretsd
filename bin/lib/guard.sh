@@ -211,7 +211,7 @@ GR
   }
   draw_gs() {
     tui_home
-    tui_header "$host" "$on of $n repository(ies) guarded · blocks the commit, not the cleanup"
+    tui_header "$host" "$on of $n repository(ies) guarded · blocks the commit, not the cleanup" "COMMIT GUARD" guard
     curline=4
     i=0
     while [ "$i" -lt "$n" ]; do
