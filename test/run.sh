@@ -167,7 +167,11 @@ if want "stat-portable"; then
   # `stat -f` on GNU means "show the filesystem" and exits 0, so a
   # `stat -f … || stat -c …` fallback never reaches the GNU branch. Linux CI
   # caught this as "the permission warning never appeared"; macOS could not.
-  hits="$(grep -rn 'stat -f.*||.*stat -c' "$ROOT/bin" 2>/dev/null | grep -vE ':[0-9]+: *#' | grep -c . || true)"
+  # Scans test/ as well as bin/. It originally scanned only bin/, which is why a
+  # fresh instance of this exact bug landed in THIS file and reached Linux CI.
+  # A guard that cannot see its own house is not a guard.
+  hits="$(grep -rn 'stat -f.*||.*stat -c' "$ROOT/bin" "$ROOT/test" 2>/dev/null \
+          | grep -vE ':[0-9]+: *#' | grep -v 'grep -rn' | grep -c . || true)"
   if [ "${hits:-0}" = "0" ]; then ok "no BSD-then-GNU stat fallback (it never falls back)"
   else no "BSD-then-GNU stat fallback present" "$hits instance(s)"; fi
 fi
@@ -496,7 +500,8 @@ import json,sys; print(json.load(sys.stdin)["counts"]["unknown"])' 2>/dev/null)"
 
   # state file permissions — it names your credentials
   if [ -f "$DATA/state/alerts.state" ]; then
-    m="$(stat -f '%Lp' "$DATA/state/alerts.state" 2>/dev/null || stat -c '%a' "$DATA/state/alerts.state" 2>/dev/null)"
+    if stat -c '%a' / >/dev/null 2>&1; then m="$(stat -c '%a' "$DATA/state/alerts.state")"
+    else                                    m="$(stat -f '%Lp' "$DATA/state/alerts.state")"; fi
     [ "$m" = "600" ] && ok "alert state is mode 600" || no "alert state is mode $m, expected 600"
   fi
 
