@@ -1,0 +1,80 @@
+name: test
+
+# CI exists because a broken commit was pushed while the local harness was
+# silently absent — /tmp had been cleaned, every screen reported failing, and it
+# went out anyway. A machine that does not share your assumptions has to check.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install sops and age
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install sops age shellcheck
+          else
+            SOPS=3.9.4
+            curl -sSLo /tmp/sops "https://github.com/getsops/sops/releases/download/v${SOPS}/sops-v${SOPS}.linux.amd64"
+            chmod +x /tmp/sops && sudo mv /tmp/sops /usr/local/bin/sops
+            sudo apt-get update -qq && sudo apt-get install -y -qq age shellcheck
+          fi
+          sops --version --disable-version-check || sops --version || true
+          age --version
+
+      - name: bash version
+        shell: bash
+        run: |
+          # macOS ships bash 3.2; secretsd needs 4+. The runner's brew bash is 5.
+          bash --version | head -1
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            echo "/opt/homebrew/bin:/usr/local/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Syntax gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in bin/secretsd bin/lib/*.sh install.sh test/run.sh; do
+            bash -n "$f" || { echo "PARSE FAIL: $f"; exit 1; }
+          done
+          python3 -c "import ast;ast.parse(open('bin/lib/agepty.py').read())"
+
+      - name: ShellCheck (errors are fatal)
+        shell: bash
+        run: shellcheck -s bash -S error bin/secretsd bin/lib/*.sh install.sh
+
+      - name: Test suite
+        shell: bash
+        run: ./test/run.sh
+
+      - name: No credential material is tracked
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The repository must never carry a store, an identity, or a key.
+          if git ls-files | grep -qE '(^|/)secrets/|\.enc\.|\.sops\.yaml|keys\.txt|\.pem$|id_(rsa|ecdsa|ed25519)'; then
+            echo "credential-shaped files are tracked:"
+            git ls-files | grep -E '(^|/)secrets/|\.enc\.|\.sops\.yaml|keys\.txt|\.pem$|id_(rsa|ecdsa|ed25519)'
+            exit 1
+          fi
+          # and no value-shaped literal may appear in the source
+          if git grep -nIE '(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY)' \
+               -- . ':!test/run.sh' ':!bin/lib/guard.sh' ':!.github'; then
+            echo "credential-shaped literal found in source"
+            exit 1
+          fi
+          echo "clean"

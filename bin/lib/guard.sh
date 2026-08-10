@@ -35,6 +35,25 @@ fail=0
 
 staged() { git diff --cached --name-only --diff-filter=ACM; }
 
+# --- allowing what is legitimately credential-shaped --------------------------
+# Test fixtures, documentation and this hook itself must be able to contain a
+# fake AWS key. Without a way to say so, the honest response to a false positive
+# is --no-verify, and a hook that trains you to bypass it is worse than none.
+#
+#   .secretsd-guard-ignore   one path glob per line, # for comments
+#   secretsd:allow           an inline marker on the offending line
+IGNORE_FILE=".secretsd-guard-ignore"
+path_allowed() {
+  [ -f "$IGNORE_FILE" ] || return 1
+  local pat
+  while IFS= read -r pat; do
+    case "$pat" in ''|'#'*) continue ;; esac
+    # shellcheck disable=SC2254
+    case "$1" in $pat) return 0 ;; esac
+  done < "$IGNORE_FILE"
+  return 1
+}
+
 # --- 1. files that are never safe to commit -----------------------------------
 while IFS= read -r f; do
   [ -n "$f" ] || continue
@@ -47,13 +66,25 @@ while IFS= read -r f; do
     credentials|.netrc|.pgpass) why="a credentials file" ;;
     *) continue ;;
   esac
+  if path_allowed "$f"; then
+    printf '%s·%s %s %s(allowed by %s)%s\n' "$DIM" "$RS" "$f" "$DIM" "$IGNORE_FILE" "$RS"
+    continue
+  fi
   printf '%s✗%s %s%s%s is %s\n' "$RED" "$RS" "$B" "$f" "$RS" "$why"
   fail=1
 done <<< "$(staged)"
 
 # --- 2. credential-shaped strings in the staged diff --------------------------
 # Provider-prefixed tokens first: these are unambiguous and worth naming exactly.
-diff_content="$(git diff --cached -U0 2>/dev/null)"
+# Build the diff from only the files that are not allowlisted, and drop any
+# line that carries the inline marker.
+diff_content=""
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  path_allowed "$f" && continue
+  diff_content="$diff_content
+$(git diff --cached -U0 -- "$f" 2>/dev/null | grep -v 'secretsd:allow')"
+done <<< "$(staged)"
 
 check() {   # pattern  description
   local hits

@@ -88,7 +88,13 @@ ui_dot() {
 # ui_rule TITLE — a section rule that fills the terminal width
 ui_rule() {
   local w t pad
-  w="$(tput cols 2>/dev/null || echo 80)"; [ "$w" -gt 100 ] && w=100
+  # NOT `tput cols 2>/dev/null` — ncurses asks the terminal over STDERR, so
+  # redirecting it makes tput fall back to terminfo's static 80 and report
+  # success. Ask the tty directly.
+  local sz; sz="$(stty size </dev/tty 2>/dev/null)"
+  if [ -n "$sz" ]; then w="${sz##* }"; else w="$(tput cols)"; fi
+  case "$w" in ''|*[!0-9]*) w=80 ;; esac
+  [ "$w" -gt 100 ] && w=100
   t=" $1 "
   pad=$(( w - ${#t} - 3 ))
   [ "$pad" -lt 0 ] && pad=0
