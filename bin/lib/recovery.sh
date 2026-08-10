@@ -91,10 +91,15 @@ rec_age_decrypt() { printf '%s\n' "$3" | python3 "$SEC_BIN/lib/agepty.py" decryp
 
 # rec_build DEST — build a kit, then restore it to prove it. Echoes the path.
 rec_build() {
+  # STDOUT IS THE RETURN CHANNEL. The caller does kit="$(rec_build ...)", so any
+  # progress printed to stdout is captured into the variable instead of shown,
+  # and the resulting "path" is a paragraph of text that no [ -f ] will match.
+  # Everything human goes to /dev/tty; only the kit path is echoed.
+  exec 3>&1 1>/dev/tty
   local dest="$1" stage="$TMPD/kit" kit tarball
   local keyfile="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"
 
-  [ -f "$keyfile" ] || { ui_err "no age identity at $keyfile — nothing to protect"; return 1; }
+  [ -f "$keyfile" ] || { ui_err "no age identity at $keyfile — nothing to protect"; exec 1>&3 3>&-; return 1; }
 
   rm -rf "$stage"; mkdir -p "$stage/secrets" "$stage/metadata"; chmod -R 700 "$stage"
 
@@ -121,7 +126,7 @@ rec_build() {
   rec_kit_manifest > "$stage/README.txt"
 
   tarball="$TMPD/kit.tar"
-  ( cd "$stage" && tar cf "$tarball" . ) || { ui_err "could not archive"; return 1; }
+  ( cd "$stage" && tar cf "$tarball" . ) || { ui_err "could not archive"; exec 1>&3 3>&-; return 1; }
 
   printf '\n'
   ui_note "The kit is encrypted with a PASSPHRASE, not with the key inside it."
@@ -135,6 +140,7 @@ rec_build() {
   if ! rec_ask_passphrase __pass; then
     rm -f "$tarball"; rm -rf "$stage"
     ui_info "cancelled — no kit was written"
+    exec 1>&3 3>&-
     return 1
   fi
   printf '\n'
@@ -143,6 +149,7 @@ rec_build() {
     __pass=""
     rm -f "$kit" "$tarball"; rm -rf "$stage"
     ui_err "encryption failed — no kit was written"
+    exec 1>&3 3>&-
     return 1
   fi
   # hand the same passphrase to the verify step so you type it once, not twice
@@ -150,6 +157,7 @@ rec_build() {
   __pass=""
   chmod 600 "$kit"
   rm -f "$tarball"; rm -rf "$stage"
+  exec 1>&3 3>&-
   printf '%s' "$kit"
 }
 
