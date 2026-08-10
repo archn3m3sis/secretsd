@@ -158,12 +158,28 @@ recovery_screen() {
 
   case "$act" in
     "Build a kit"*)
-      tui_page "BUILD A RECOVERY KIT" "$SEC_ROOT"
-      local dest
-      dest="$(ui_ask 'Write the kit to' "$REC_DEFAULT_DIR")" || return 0
-      dest="${dest/#\~/$HOME}"
-      [ -n "$dest" ] || dest="$REC_DEFAULT_DIR"
-      printf '\n'
+        # The subtitle used to be the data root, printed directly above the
+        # destination prompt — it read as the answer rather than as the source.
+        tui_page "BUILD A RECOVERY KIT" "protecting the vault at $SEC_ROOT"
+        printf '\n'
+        tui_kv "source — what is backed up" "$SEC_ROOT" "$T_DIM"
+        tui_kv "destination — where the kit goes" "$REC_DEFAULT_DIR"
+        printf '\n'
+        ui_note "Press enter to accept the destination, or type a different folder."
+        printf '\n'
+        local dest
+        dest="$(ui_ask "Write the kit to [$REC_DEFAULT_DIR]" "$REC_DEFAULT_DIR")" || return 0
+        case "$dest" in "~"*) dest="$HOME${dest#\~}" ;; esac
+        [ -n "$dest" ] || dest="$REC_DEFAULT_DIR"
+        if [ ! -d "$dest" ]; then
+          ui_warn "$dest does not exist"
+          ui_confirm "Create it?" || { ui_info "cancelled"; ui_pause; return 0; }
+          mkdir -p "$dest" || { ui_err "could not create $dest"; ui_pause; return 1; }
+        fi
+        [ -w "$dest" ] || { ui_err "$dest is not writable"; ui_pause; return 1; }
+        printf '\n'
+        ui_ok "writing the kit to: $dest"
+        printf '\n'
       local kit
       kit="$(rec_build "$dest")"
       if [ -z "$kit" ] || [ ! -f "$kit" ]; then ui_pause; return 1; fi
