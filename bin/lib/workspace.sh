@@ -675,7 +675,7 @@ HOMEG
   elif [ -n "$achecked" ]; then adot=ok;   aval="nothing due"
   else adot=none; aval="never scanned"; fi
   _row alerts    '⡎⠭⢱⠀' "$N_AMBER"   "EXPIRY"    "$aval" "$adot" \
-       "$(alert_scheduled 2>/dev/null && echo "daily at $(alert_schedule_hour):00" || echo "not scheduled")" \
+       "$(alert_scheduled 2>/dev/null && echo "daily at $(alert_schedule_at)" || echo "not scheduled")" \
        "certs and recorded dates, checked on a schedule — $aunk have no date at all"
   _row keychain  '⣰⣉⣉⣆' "$N_BLUE"    "KEYCHAIN"  "$(kc_available 2>/dev/null && echo "macOS login keychain" || echo "not available here")" \
        "$(kc_available 2>/dev/null && echo none || echo err)" "import, never delete" \

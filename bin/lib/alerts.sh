@@ -203,8 +203,8 @@ alert_banner() {
 }
 
 # --- scheduling --------------------------------------------------------------
-alert_schedule_install() {   # $1 hour-of-day (0-23)
-  local hour="${1:-9}"
+alert_schedule_install() {   # $1 hour-of-day (0-23)  $2 minute (0-59)
+  local hour="${1:-9}" minute="${2:-0}"
   mkdir -p "$HOME/Library/LaunchAgents" 2>/dev/null
   cat > "$ALERT_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -224,7 +224,7 @@ alert_schedule_install() {   # $1 hour-of-day (0-23)
     <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>$hour</integer><key>Minute</key><integer>0</integer></dict>
+  <dict><key>Hour</key><integer>$hour</integer><key>Minute</key><integer>$minute</integer></dict>
   <key>RunAtLoad</key><false/>
   <key>StandardOutPath</key><string>$SEC_ROOT/state/alerts.out</string>
   <key>StandardErrorPath</key><string>$SEC_ROOT/state/alerts.err</string>
@@ -249,6 +249,17 @@ alert_schedule_remove() {
 alert_schedule_hour() {
   [ -f "$ALERT_PLIST" ] || return 1
   ui_plist_int "$ALERT_PLIST" Hour
+}
+alert_schedule_min() {
+  [ -f "$ALERT_PLIST" ] || return 1
+  ui_plist_int "$ALERT_PLIST" Minute || printf '0'
+}
+# alert_schedule_at -> "HH:MM" of the installed schedule
+alert_schedule_at() {
+  local h m
+  h="$(alert_schedule_hour)" || return 1
+  m="$(alert_schedule_min)"; m="${m:-0}"
+  printf '%02d:%02d' "$h" "$m"
 }
 
 # --- screen ------------------------------------------------------------------
@@ -324,7 +335,7 @@ alerts_screen() {
           "$([ "${unknown:-0}" -gt 0 ] && printf '%s' "$T_WARN" || printf '%s' "$T_OK")"
         printf 'last checked\t%s\t%s\n' "${checked:-never}" "$T_MUTE"
         if alert_scheduled; then
-          printf 'schedule\tdaily at %s:00, verified in launchctl\t%s\n' "$(alert_schedule_hour)" "$T_OK"
+          printf 'schedule\tdaily at %s, verified in launchctl\t%s\n' "$(alert_schedule_at)" "$T_OK"
         else
           printf 'schedule\tnot scheduled — nothing will remind you\t%s\n' "$T_WARN"
         fi
@@ -405,16 +416,21 @@ alerts_screen() {
           ui_note "on Linux, add a cron entry:  0 9 * * *  $SEC_SELF alerts run"
           ui_pause; continue
         fi
-        local hour
-        hour="$(ui_ask 'hour of day to check, 0-23' "$(alert_schedule_hour 2>/dev/null || printf '9')")" || continue
-        case "$hour" in ''|*[!0-9]*) ui_err "not a number"; ui_pause; continue ;; esac
-        [ "$hour" -ge 0 ] && [ "$hour" -le 23 ] || { ui_err "0-23"; ui_pause; continue; }
-        if alert_schedule_install "$hour"; then
-          ui_ok "scheduled daily at ${hour}:00 — verified loaded in launchctl"
-          launchctl list 2>/dev/null | grep 'com.secretsd.alerts' | sed 's/^/     /'
+        local picked hour minute
+        picked="$(clock_pick_time "$(alert_schedule_hour 2>/dev/null || printf '9')" \
+                                  "$(alert_schedule_min  2>/dev/null || printf '0')")" || continue
+        hour="${picked%% *}"; minute="${picked##* }"
+        tui_page "SCHEDULE" "$(printf 'daily at %02d:%02d' "$hour" "$minute")"
+        printf '\n'
+        if alert_schedule_install "$hour" "$minute"; then
+          ui_ok "$(printf 'scheduled daily at %02d:%02d' "$hour" "$minute")"
+          ui_note "verified loaded in launchctl:"
+          launchctl list 2>/dev/null | ui_grep_show 'com.secretsd.alerts' | sed 's/^/     /'
+          sec_log_start alerts
+          sec_log "$(printf 'expiry alerts scheduled daily at %02d:%02d' "$hour" "$minute")"
         else
           ui_err "launchctl did not report the agent as loaded"
-          ui_note "check: launchctl load $ALERT_PLIST"
+          ui_note "check by hand: launchctl load $ALERT_PLIST"
         fi
         ui_pause ;;
       "Stop the schedule")

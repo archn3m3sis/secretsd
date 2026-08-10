@@ -64,6 +64,8 @@ ui_interactive() { [ -t 1 ] && [ -c /dev/tty ] 2>/dev/null; }
 ui_match_line() { awk -v w="$1" '$0 == w        { f = 1 } END { exit !f }'; }  # exact line
 ui_match_sub()  { awk -v w="$1" 'index($0, w)   { f = 1 } END { exit !f }'; }  # substring
 ui_match_re()   { awk -v w="$1" '$0 ~ w         { f = 1 } END { exit !f }'; }  # regex
+# print matching lines (reads to EOF, so the producer is never SIGPIPEd)
+ui_grep_show() { awk -v w="$1" 'index($0, w)'; }
 
 # ui_plist_int PLIST KEY — read an <integer> value out of a launchd plist.
 # The plists here write <key>K</key><integer>N</integer> on ONE line, so the

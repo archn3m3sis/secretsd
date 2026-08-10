@@ -127,6 +127,35 @@ secretsd alerts run        # what launchd calls, daily
 secretsd alerts --json     # exit 2 if anything is expired, 1 if anything is due
 ```
 
+Setting the time is a clock, not a prompt. `hour of day to check, 0-23:` tells
+you nothing about what you just picked; hands do. The hour comes first and on
+its own, because that is the decision that matters — the difference between
+"while I sleep" and "in the middle of a meeting" — and the minutes follow.
+
+```
+                  ⠀⠀⠀⠀⠀⠀⢀⣠⣤⠴⠶⠶⠶⠶⠦⣤⣄⡀⠀⠀⠀⠀⠀⠀
+                  ⠀⠀⠀⠀⣠⠶⠋⣁⠀⠀⠀⠺⠗⠀⠀⠀⣈⠙⠶⣄⠀⠀⠀⠀
+                  ⠀⠀⢠⡞⠁⠀⠀⠁⠀⠀⠀⢸⡇⠀⠀⠀⠈⠀⠀⠈⢳⡄⠀⠀
+                  ⠀⣰⠏⢠⠄⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠠⡄⠹⣆⠀
+                  ⢀⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⡀
+                  ⢸⡇⣀⡀⠀⠀⢀⣀⣀⣀⣀⣸⣇⠀⠀⠀⠀⠀⠀⠀⢀⣄⢸⡇
+                  ⢸⡇⠙⠁⠀⠀⠈⠉⠉⠉⠉⠙⠋⠀⠀⠀⠀⠀⠀⠀⠈⠋⢸⡇
+                  ⠈⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⠁
+                  ⠀⠹⣆⠘⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⠃⣰⠏⠀
+                  ⠀⠀⠘⢧⡀⠀⠀⡀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⠀⢀⡼⠃⠀⠀
+                  ⠀⠀⠀⠀♶⣄⡉⠀⠀⠀⢴⡦⠀⠀⠀⢉⣠⠶⠋⠀⠀⠀⠀
+                  ⠀⠀⠀⠀⠀⠀⠈⠙⠛⠲⠶⠶⠶⠶⠖⠛⠋⠁⠀⠀⠀⠀⠀⠀
+
+                              21:00
+                          9 PM · evening
+```
+
+Type the digits or nudge with the arrows; the hour hand advances with the
+minutes the way a real one does, and the face resizes to fit a 60-column
+window. Two digits that would overflow the field start a fresh entry rather
+than clamping — a silent clamp is how you end up scheduled for a time you
+never chose.
+
 It reads expiry from three places, because that is where expiry actually lives:
 
 1. the `expires:` dates you recorded in the manifest

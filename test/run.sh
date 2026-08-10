@@ -663,6 +663,90 @@ if want pipefail; then
                   || no "plist reader returned [$m], expected 17"
 fi
 
+
+# ==============================================================================
+# the clock picker
+# ==============================================================================
+if want clock; then
+  group "clock"
+
+  CLK="$ROOT/bin/lib/clock.py"
+
+  # a face must be square in CELLS: dots/2 wide, dots/4 tall
+  d="$(python3 "$CLK" 9 0 48 2>/dev/null)"
+  rows="$(printf '%s\n' "$d" | wc -l | tr -d ' ')"
+  cols="$(printf '%s\n' "$d" | head -1 | python3 -c 'import sys; print(len(sys.stdin.readline().rstrip("\n")))')"
+  if [ "$rows" = "12" ] && [ "$cols" = "24" ]; then
+    ok "the 48-dot face renders 24x12 cells"
+  else
+    no "face geometry is ${cols}x${rows}, expected 24x12"
+  fi
+
+  # every character must be from the braille block — one stray ASCII and the
+  # grid stops lining up
+  bad="$(printf '%s\n' "$d" | python3 -c '
+import sys
+n = 0
+for line in sys.stdin:
+    for ch in line.rstrip("\n"):
+        if not (0x2800 <= ord(ch) <= 0x28FF):
+            n += 1
+print(n)')"
+  [ "${bad:-1}" = "0" ] && ok "the face is drawn entirely from the braille block" \
+                        || no "$bad non-braille character(s) in the face"
+
+  # the hands must actually move — 3:00 and 9:00 cannot render identically
+  a="$(python3 "$CLK" 3 0 48 2>/dev/null | md5sum 2>/dev/null || python3 "$CLK" 3 0 48 | md5 -q)"
+  b="$(python3 "$CLK" 9 0 48 2>/dev/null | md5sum 2>/dev/null || python3 "$CLK" 9 0 48 | md5 -q)"
+  [ "$a" != "$b" ] && ok "different times render different faces" \
+                   || no "3:00 and 9:00 render identically — the hands are not drawn"
+
+  # the hour hand must follow the minutes: 09:00 and 09:59 differ
+  a="$(python3 "$CLK" 9 0 48  | md5sum 2>/dev/null || python3 "$CLK" 9 0 48  | md5 -q)"
+  b="$(python3 "$CLK" 9 59 48 | md5sum 2>/dev/null || python3 "$CLK" 9 59 48 | md5 -q)"
+  [ "$a" != "$b" ] && ok "the hour hand advances with the minutes" \
+                   || no "09:00 and 09:59 are identical — the hour hand is nailed to the hour"
+
+  # 24-hour wrap: 21:00 must look like 9:00, because a clock face has 12 hours
+  a="$(python3 "$CLK" 21 0 48 | md5sum 2>/dev/null || python3 "$CLK" 21 0 48 | md5 -q)"
+  b="$(python3 "$CLK" 9 0 48  | md5sum 2>/dev/null || python3 "$CLK" 9 0 48  | md5 -q)"
+  [ "$a" = "$b" ] && ok "21:00 draws the same face as 09:00" \
+                  || no "the 24-hour wrap is wrong"
+
+  # never crash on the edges, whatever is thrown at it
+  bad=""
+  for t in "0 0" "23 59" "12 30" "24 60" "-1 -1"; do
+    python3 "$CLK" $t 48 >/dev/null 2>&1 || bad="$bad [$t]"
+  done
+  [ -z "$bad" ] && ok "the renderer survives every edge value" || no "crashed on:$bad"
+
+  # tp_commit: two digits that overflow start a NEW entry rather than clamping.
+  # A silent clamp is how you end up scheduled for a time you never chose.
+  r="$(bash -c '
+    . "'"$ROOT"'/bin/lib/ui.sh"; . "'"$ROOT"'/bin/lib/tui.sh" 2>/dev/null
+    SEC_BIN="'"$ROOT"'/bin"; . "'"$ROOT"'/bin/lib/timepick.sh"
+    printf "%s %s %s %s" "$(tp_commit 09 23)" "$(tp_commit 23 23)" \
+                         "$(tp_commit 25 23)" "$(tp_commit 07 59)"')"
+  [ "$r" = "9 23 5 7" ] && ok "hour entry rejects an overflow instead of clamping it" \
+                        || no "tp_commit gave [$r], expected [9 23 5 7]"
+
+  # the picker must not draw on its own return channel
+  if grep -q 'exec 3>&1 1>/dev/tty' "$ROOT/bin/lib/timepick.sh"; then
+    ok "clock_pick_time reserves stdout as its return channel"
+  else
+    no "clock_pick_time draws on stdout — the caller will capture the drawing"
+  fi
+
+  # the schedule must round-trip hour AND minute through the plist
+  r="$(bash -c '
+    . "'"$ROOT"'/bin/lib/ui.sh"
+    f="$(mktemp)"
+    printf "<dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>30</integer></dict>\n" > "$f"
+    printf "%s:%s" "$(ui_plist_int "$f" Hour)" "$(ui_plist_int "$f" Minute)"; rm -f "$f"')"
+  [ "$r" = "0:30" ] && ok "hour and minute both round-trip through the plist" \
+                    || no "plist round-trip gave [$r], expected [0:30]"
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"
