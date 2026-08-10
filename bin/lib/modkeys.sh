@@ -107,7 +107,8 @@ $(keys_private_paths)
 KEYS
 
   if [ "$n" -eq 0 ]; then
-    tui_page "KEY MANAGEMENT" "no private keys found in ~/.ssh"
+    TUI_PAGE_MARK="$(tui_glyph keys)"
+    tui_page "SSH KEYS" "no private keys found in ~/.ssh — nothing to report on"
     ui_pause; return 0
   fi
 

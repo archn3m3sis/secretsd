@@ -69,7 +69,8 @@ $(mach_hosts)
 HOSTS
 
   if [ "$n" -eq 0 ]; then
-    tui_page "MACHINE MANAGEMENT" "no Host entries in ~/.ssh/config"
+    TUI_PAGE_MARK="$(tui_glyph machines)"
+    tui_page "MACHINES" "no Host entries in ~/.ssh/config"
     ui_pause; return 0
   fi
 

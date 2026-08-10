@@ -20,10 +20,23 @@ def drain(t):
         if b'\x1b]11;?' in o[-200:]: os.write(fd,b'\x1b]11;rgb:158e/193a/1e75\x1b\\')
         if b'\x1b[6n'  in o[-200:]: os.write(fd,b'\x1b[15;1R')
     return o
+# A screen with nothing to show draws its page, pauses, and returns — so the
+# child may already be gone. Writing to a closed pty raises EIO, which used to
+# abort the whole capture and made an empty-state screen look like a screen that
+# rendered nothing at all. That is a harness bug that failed CI, not a program
+# bug: keep whatever was drawn.
+def send(b, t):
+    global buf
+    try:
+        os.write(fd, b)
+    except OSError:
+        return False
+    buf += drain(t)
+    return True
+
 buf=drain(2.6)
-os.write(fd,b'j'); buf+=drain(0.5)
-os.write(fd,b'k'); buf+=drain(0.8)
-os.write(fd,b'q'); drain(0.3)
+if send(b'j',0.5): send(b'k',0.8)
+send(b'q',0.3)
 try: os.waitpid(pid,os.WNOHANG)
 except Exception: pass
 d=buf.decode('utf-8','replace')

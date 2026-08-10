@@ -204,7 +204,9 @@ broker_purge() {   # $1 uuid  $2 transcript path
 # --- the merge / archive / purge screen ---------------------------------------
 broker_screen() {
   ui_interactive || { ui_needs_tty broker; return 1; }
-  broker_have || { tui_page "SESSION BROKER" "claude CLI not on PATH"; ui_pause; return 0; }
+  broker_have || { TUI_PAGE_MARK="$(tui_glyph broker)"
+                   tui_page "SESSION BROKER" "the claude CLI is not on PATH — the broker drives it"
+                   ui_pause; return 0; }
 
   local -a B_ID B_NAME B_PROJ B_PATH B_TR B_WHEN B_MSGS B_MARK B_LINE
   local n=0 uuid cwd title when msgs sub
@@ -219,7 +221,9 @@ broker_screen() {
   done <<BRK
 $(ws_scan_sessions)
 BRK
-  [ "$n" -gt 0 ] || { tui_page "SESSION BROKER" "no sessions found"; ui_pause; return 0; }
+  [ "$n" -gt 0 ] || { TUI_PAGE_MARK="$(tui_glyph broker)"
+                      tui_page "SESSION BROKER" "no Claude Code sessions found on this machine"
+                      ui_pause; return 0; }
 
   local sel=0 key prev curline host i marked=0
   host="$(hostname -s 2>/dev/null || echo host)"

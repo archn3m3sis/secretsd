@@ -68,7 +68,8 @@ $(certs_find; certs_piv_export)
 CERTS
 
   if [ "$n" -eq 0 ]; then
-    tui_page "CERTIFICATE MANAGEMENT" "no parseable certificates found"
+    TUI_PAGE_MARK="$(tui_glyph certs)"
+    tui_page "CERTIFICATES" "no parseable certificates found in the searched roots"
     printf '\n'
     ui_info "searched:"; for f in $CERTS_ROOTS; do printf '     %s\n' "$f"; done
     ui_note "set CERTS_ROOTS to point it elsewhere"

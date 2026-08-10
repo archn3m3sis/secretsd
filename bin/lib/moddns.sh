@@ -72,7 +72,8 @@ dns_screen() {
   ui_interactive || { ui_needs_tty dns; return 1; }
 
   if ! sec_has "$DNS_TOKEN_KEY"; then
-    tui_page "DOMAIN MANAGEMENT" "no Cloudflare token in the vault"
+    TUI_PAGE_MARK="$(tui_glyph dns)"
+    tui_page "DOMAINS" "no Cloudflare token in the vault"
     printf '\n'
     ui_err "'$DNS_TOKEN_KEY' is not in this store"
     ui_note "add it, scoped to DNS edit on the zones you want to manage:"
@@ -92,7 +93,8 @@ $(dns_zones)
 ZONES
 
   if [ "$n" -eq 0 ]; then
-    tui_page "DOMAIN MANAGEMENT" "could not list zones"
+    TUI_PAGE_MARK="$(tui_glyph dns)"
+    tui_page "DOMAINS" "could not list zones"
     printf '\n'
     ui_err "Cloudflare returned no zones"
     ui_note "the token may lack Zone:Read, or this host may have no egress"
