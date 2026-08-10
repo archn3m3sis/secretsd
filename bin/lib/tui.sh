@@ -578,7 +578,8 @@ tui_icon_top() {
     pkm)      printf '⣴⣹⣏⣦' ;;  posture)   printf '⡏⠭⠭⢹' ;;
     doctor)   printf '⠯⠿⠿⠽' ;;
     recovery) printf '⡏⣩⣍⢹' ;;  guard) printf '⡏⠭⠭⢹' ;;
-    monitor)  printf '⡗⠦⢄' ;;
+    monitor)  printf '⣠⠞⠳⣄' ;;
+    alerts)   printf '⠀⣰⣆⠀' ;;  keychain) printf '⡎⠭⢱⠀' ;;
     *)        printf '⡏⠉⠉⢹' ;;
   esac
 }
@@ -597,6 +598,7 @@ tui_icon_bot() {
     doctor)   printf '⠯⣿⣿⠽' ;;
     recovery) printf '⣇⣙⣋⣸' ;;  guard) printf '⠉⢯⡽⠉' ;;
     monitor)  printf '⠙⢦⡴⠋' ;;
+    alerts)   printf '⠀⠈⠁⠀' ;;  keychain) printf '⠈⠛⡓⡆' ;;
     *)        printf '⣇⣀⣀⣸' ;;
   esac
 }

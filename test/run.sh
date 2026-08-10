@@ -346,6 +346,224 @@ if want "render"; then
   else skip "render" "test/shot.py missing"; fi
 fi
 
+
+# ==============================================================================
+# --json — machine-readable output
+#
+# The single most important assertion in this file: a JSON mode that leaks a
+# credential value would silently undo the entire premise of the program. The
+# leak test decrypts the fixture store, then greps every --json output for each
+# real value. It must find nothing.
+# ==============================================================================
+if want json; then
+  group "--json"
+
+  JOUT="$DATA/json"; mkdir -p "$JOUT"
+  for c in names doctor expiring posture sessions alerts; do
+    sd "$c" --json > "$JOUT/$c.json" 2>"$JOUT/$c.err"
+    printf '%s' "$?" > "$JOUT/$c.rc"
+  done
+
+  badjson=""
+  for c in names doctor expiring posture sessions alerts; do
+    python3 -c "import json,sys; json.load(open('$JOUT/$c.json'))" 2>/dev/null || badjson="$badjson $c"
+  done
+  [ -z "$badjson" ] && ok "every --json command emits parseable JSON" \
+                    || no "invalid JSON from:$badjson"
+
+  # stderr must stay empty on the happy path — a warning there is fine, but a
+  # traceback is not, and a traceback is what a missing helper looks like.
+  tb=""
+  for c in names doctor expiring posture sessions alerts; do
+    grep -q 'Traceback' "$JOUT/$c.err" 2>/dev/null && tb="$tb $c"
+  done
+  [ -z "$tb" ] && ok "no --json command raises a python traceback" || no "traceback from:$tb"
+
+  # THE LEAK TEST
+  leaked=""
+  vals="$(SECRETSD_HOME="$DATA" SOPS_AGE_KEY_FILE="$AGE_KEY" \
+          sops --config /dev/null -d --input-type dotenv --output-type dotenv \
+          "$DATA/secrets/api-keys.enc.env" 2>/dev/null | sed 's/^[^=]*=//' | grep -v '^ok$')"
+  while IFS= read -r v; do
+    [ ${#v} -ge 8 ] || continue
+    for c in names doctor expiring posture sessions alerts; do
+      grep -qF -- "$v" "$JOUT/$c.json" 2>/dev/null && leaked="$leaked $c"
+    done
+  done <<LEAKV
+$vals
+LEAKV
+  [ -z "$leaked" ] && ok "no --json output contains a credential value" \
+                   || no "VALUE LEAKED into:$leaked"
+
+  # names --json must list every key the plain command lists
+  jn="$(python3 -c "import json; print(json.load(open('$JOUT/names.json'))['count'])" 2>/dev/null)"
+  pn="$(sd names 2>/dev/null | grep -c . || true)"
+  [ "$jn" = "$pn" ] && ok "names --json counts match the plain listing ($jn)" \
+                    || no "names --json says $jn, plain says $pn"
+
+  # exit codes are the CI contract: 0 clean, 1 warnings, 2 critical
+  drc="$(cat "$JOUT/doctor.rc")"
+  case "$drc" in 0|1|2) ok "doctor --json exits with a documented code ($drc)" ;;
+                 *)     no "doctor --json exited $drc, expected 0, 1 or 2" ;; esac
+
+  # a command with no JSON form must refuse loudly, not print a TUI into a pipe
+  out="$(sd rotate --json 2>&1)"; rc=$?
+  if [ "$rc" = "64" ] && printf '%s' "$out" | grep -q 'not available'; then
+    ok "--json refuses unsupported commands with exit 64"
+  else
+    no "--json on an unsupported command exited $rc" "$(printf '%s' "$out" | head -2)"
+  fi
+
+  # --json is a GLOBAL flag: it must work before the subcommand too
+  if sd --json names 2>/dev/null | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
+    ok "--json is accepted before the subcommand as well as after"
+  else
+    no "--json only works in one position"
+  fi
+fi
+
+# ==============================================================================
+# doctor — one producer, two renderers
+# ==============================================================================
+if want doctor; then
+  group "doctor"
+
+  recs="$(SECRETSD_HOME="$DATA" SOPS_AGE_KEY_FILE="$AGE_KEY" bash -c '
+    SEC_SELF="'"$BIN"'"; export SEC_SELF
+    . "'"$ROOT"'/bin/lib/ui.sh" 2>/dev/null
+    exec "'"$BIN"'" doctor --json' 2>/dev/null | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+print(d["total"], d["failures"], d["warnings"])' 2>/dev/null)"
+  set -- $recs
+  [ "${1:-0}" -gt 10 ] && ok "doctor_probe emits a full check set (${1:-0} checks)" \
+                       || no "doctor emitted only ${1:-0} checks"
+
+  # every record must carry all four fields; a missing section makes the
+  # terminal renderer print an empty rule
+  bad="$(sd doctor --json 2>/dev/null | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+print(sum(1 for c in d["checks"] if not c["section"] or not c["check"] or c["status"] not in ("ok","warn","fail","info")))')"
+  [ "${bad:-1}" = "0" ] && ok "every doctor record is well-formed" \
+                        || no "$bad doctor record(s) are malformed"
+
+  # the two renderers must agree on the verdict
+  sd doctor >/dev/null 2>&1; trc=$?
+  sd doctor --json >/dev/null 2>&1; jrc=$?
+  # terminal returns 1 only on failure; json returns 2 on failure, 1 on warnings
+  if { [ "$trc" = "1" ] && [ "$jrc" = "2" ]; } || { [ "$trc" = "0" ] && [ "$jrc" != "2" ]; }; then
+    ok "terminal and JSON doctor agree on the verdict (tty=$trc json=$jrc)"
+  else
+    no "doctor renderers disagree" "terminal=$trc json=$jrc"
+  fi
+fi
+
+# ==============================================================================
+# alerts — proactive expiry
+# ==============================================================================
+if want alerts; then
+  group "alerts"
+
+  sd alerts run >/dev/null 2>&1; arc=$?
+  if [ -f "$DATA/state/alerts.state" ]; then
+    ok "alerts run writes its state file"
+  else
+    no "alerts run produced no state file"
+  fi
+  [ -f "$DATA/state/expiry-report.md" ] && ok "alerts run always writes the report" \
+                                        || no "no expiry report written"
+
+  # the report is the durable channel and must never carry a value
+  rl=""
+  while IFS= read -r v; do
+    [ ${#v} -ge 8 ] || continue
+    grep -qF -- "$v" "$DATA/state/expiry-report.md" 2>/dev/null && rl="leaked"
+  done <<LEAKR
+$(SECRETSD_HOME="$DATA" SOPS_AGE_KEY_FILE="$AGE_KEY" \
+  sops --config /dev/null -d --input-type dotenv --output-type dotenv \
+  "$DATA/secrets/api-keys.enc.env" 2>/dev/null | sed 's/^[^=]*=//' | grep -v '^ok$')
+LEAKR
+  [ -z "$rl" ] && ok "the expiry report contains no credential value" \
+               || no "VALUE LEAKED into the expiry report"
+
+  # a credential with no recorded expiry is a FINDING, not silence — this is the
+  # exact gap that let four DoD CA certs sit ~500 days expired unnoticed
+  unk="$(sd alerts --json 2>/dev/null | python3 -c '
+import json,sys; print(json.load(sys.stdin)["counts"]["unknown"])' 2>/dev/null)"
+  [ "${unk:-0}" -gt 0 ] && ok "credentials with no recorded expiry are reported ($unk)" \
+                        || no "unknown expiry was silently treated as fine"
+
+  # state file permissions — it names your credentials
+  if [ -f "$DATA/state/alerts.state" ]; then
+    m="$(stat -f '%Lp' "$DATA/state/alerts.state" 2>/dev/null || stat -c '%a' "$DATA/state/alerts.state" 2>/dev/null)"
+    [ "$m" = "600" ] && ok "alert state is mode 600" || no "alert state is mode $m, expected 600"
+  fi
+
+  # alerts must never modify the store
+  before="$(md5sum "$DATA/secrets/api-keys.enc.env" 2>/dev/null || md5 -q "$DATA/secrets/api-keys.enc.env")"
+  sd alerts run >/dev/null 2>&1
+  after="$(md5sum "$DATA/secrets/api-keys.enc.env" 2>/dev/null || md5 -q "$DATA/secrets/api-keys.enc.env")"
+  [ "$before" = "$after" ] && ok "alerts never modify the credential store" \
+                           || no "the store changed after an alert run"
+
+  # warn-only: a scheduled run must not install anything by itself
+  [ -f "$HOME/Library/LaunchAgents/com.secretsd.alerts.plist" ] \
+    && skip "alerts does not self-schedule" "a plist already exists on this host" \
+    || ok "running alerts does not install a schedule by itself"
+fi
+
+# ==============================================================================
+# keychain — macOS import
+# ==============================================================================
+if want keychain; then
+  group "keychain"
+
+  kcsh() { SECRETSD_HOME="$DATA" SOPS_AGE_KEY_FILE="$AGE_KEY" bash -c '
+    set -uo pipefail
+    SEC_ROOT="'"$DATA"'"; SEC_BIN="'"$ROOT"'/bin"; TMPD="'"$DATA"'/tmp"; mkdir -p "$TMPD"
+    . "$SEC_BIN/lib/ui.sh"; . "$SEC_BIN/lib/keychain.sh"
+    '"$1"''; }
+
+  # key names must be legal store keys whatever the service is called
+  bad="$(kcsh '
+    for s in "Google Chrome Safe Storage" "my.app/thing" "1Password" "café ☕ login" "-leading" ""; do
+      k="$(kc_keyname "$s" "acct")"
+      printf "%s\n" "$k" | grep -qE "^[A-Z][A-Z0-9_]*$" || printf "%s->%s " "$s" "$k"
+    done')"
+  [ -z "$bad" ] && ok "keychain key names are always legal store keys" \
+               || no "illegal key names generated" "$bad"
+
+  # names must be capped — a 200-char service name must not become a 200-char key
+  len="$(kcsh 'kc_keyname "$(python3 -c "print(\"x\"*300)")" "" | tr -d "\n" | wc -c' | tr -d ' ')"
+  [ "${len:-999}" -le 60 ] && ok "keychain key names are capped at 60 characters" \
+                           || no "a key name of $len characters was generated"
+
+  # the system filter must hide Apple internals and keep real ones
+  r="$(kcsh '
+    for s in "com.apple.assistant" "iCloud" "Chrome Safe Storage" "AirPlay Server Identity"; do
+      kc_is_system "$s" || printf "MISSED:%s " "$s"; done
+    for s in "Raycast" "my-startup-api" "GitLab" "nova-key-1666"; do
+      kc_is_system "$s" && printf "OVERREACH:%s " "$s"; done; true')"
+  [ -z "$r" ] && ok "the system filter hides Apple internals and keeps yours" || no "filter wrong" "$r"
+
+  if [ "$(uname -s)" = "Darwin" ]; then
+    # enumeration must never require authorisation and never return a value
+    out="$(kcsh 'kc_list | head -40')"
+    if printf '%s' "$out" | grep -q '|'; then
+      ok "keychain enumerates without any authorisation prompt"
+    else
+      skip "keychain enumeration" "no items enumerable in this environment"
+    fi
+    printf '%s' "$out" | grep -qiE 'password:|"passw|0x[0-9a-f]{32}' \
+      && no "kc_list output looks like it carries secret material" \
+      || ok "kc_list returns names only, never values"
+  else
+    kcsh 'kc_available' && no "kc_available claims yes on a non-Darwin host" \
+                        || ok "keychain correctly reports unavailable off macOS"
+  fi
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"

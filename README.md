@@ -115,6 +115,32 @@ Plus **YubiKey** (OATH codes, PIV slots, and moving a TOTP seed off disk onto ha
 
 ---
 
+## Expiry that comes to you
+
+`secretsd expiring` is a correct report that is completely useless if you only think to run it
+after the outage. So it runs on a schedule and comes to you instead — a desktop notification, a
+written report, and a line on the dashboard the next time you open the program.
+
+```sh
+secretsd alerts            # the screen: counts, schedule, last check
+secretsd alerts run        # what launchd calls, daily
+secretsd alerts --json     # exit 2 if anything is expired, 1 if anything is due
+```
+
+It reads expiry from three places, because that is where expiry actually lives:
+
+1. the `expires:` dates you recorded in the manifest
+2. **the certificates themselves**, parsed from the PEM — no bookkeeping to forget
+3. everything with **no recorded expiry at all**, reported as a finding rather than as silence
+
+That third one is the whole point. On the machine this was written for, the manifest-only report
+said *zero expired* while four DoD CA certificates on disk had been dead for up to 497 days.
+Nothing was wrong with the report. It was answering a question about a file nobody had updated.
+
+It will not rotate, renew, or delete anything. It tells you, and it keeps telling you.
+
+---
+
 ## Why a note vault is part of this
 
 Every strong development and security team I have worked with had the same thing in common, and
@@ -229,10 +255,47 @@ completion, and asks where your data should live.
 
 ```sh
 secretsd import      # Bitwarden · 1Password · KeePass/XC · Passbolt · pass
+secretsd keychain    # macOS login keychain
 ```
 
 Format is detected from the file's own structure, not its extension. A dry preview shows what
 would be written — names and field types only, never a value.
+
+The keychain importer is honest about what it costs you. Listing what is in there is free —
+names are not secret, and no authorisation is required. **Reading a value is not free**: macOS
+raises an allow-access dialog per item, because secretsd is not the app that stored it. That is
+the keychain working correctly, so the importer is built around picking a handful rather than
+approving fifty dialogs. Apple's own internals are hidden by default (53 of 165 items on a real
+Mac); `KC_SHOW_SYSTEM=1` includes them. Nothing is ever removed from the keychain.
+
+---
+
+## Scripting it
+
+Every read-only report has a `--json` form, and the flag works on either side of the subcommand.
+
+```sh
+secretsd names --json      # the inventory
+secretsd doctor --json     # every health check, with its verdict
+secretsd expiring --json   # dates, days remaining, and what has no date at all
+secretsd posture --json    # security findings
+secretsd sessions --json   # named Claude Code sessions
+secretsd alerts --json     # the scheduled expiry scan
+```
+
+Exit codes are the CI contract: **0** clean, **1** warnings, **2** something critical or expired.
+So a pipeline gate is one line:
+
+```sh
+secretsd doctor --json > health.json || echo "credential store needs attention"
+```
+
+**No `--json` output ever contains a credential value** — not truncated, not hashed, not "just the
+first four characters". Names, dates, counts, and verdicts only. The test suite decrypts the
+fixture store and greps every JSON output for every real value; finding one fails the build.
+
+Each report has exactly one producer feeding both renderers, so the terminal view and the JSON
+can never disagree about what was found.
 
 ---
 
@@ -267,7 +330,8 @@ Written for one person's real machine and hardened against the problems that mac
 had. It is used daily, but it has one author and one production install — read the source
 before you trust it with anything you cannot afford to lose. Issues and patches welcome.
 
-Bash, ~8,000 lines, no runtime dependencies beyond the tools above.
+Bash, ~12,000 lines, no runtime dependencies beyond the tools above.
+52 tests, run on Linux and macOS in CI.
 
 ## License
 

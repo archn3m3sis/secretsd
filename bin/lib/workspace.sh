@@ -612,7 +612,7 @@ home_screen() {
   _row inbox     '⣠⣿⣄' "$N_MAGENTA" "INBOX"     "$nunread unread" \
        "$([ "${nunread:-0}" -gt 0 ] && echo warn || echo ok)" "agent-authored credentials" \
        "what an agent created for you, for which project, and why"
-  _row sessions  '⡗⠦⢄' "$N_BLUE"    "SESSIONS"  "$nsess named" \
+  _row sessions  '⣠⠞⠳⣄' "$N_BLUE"    "SESSIONS"  "$nsess named" \
        "$([ "${nsess:-0}" -gt 0 ] && echo ok || echo none)" "your names, not log UUIDs" \
        "resume by the name you gave it, never by a UUID"
   _row pkm       '⢴⣿⡦' "$N_VIOLET"  "KNOWLEDGE" "$pkmsys" \
@@ -651,13 +651,35 @@ HOMEG
   local monstate mondesc
   if mon_scheduled 2>/dev/null; then monstate=ok; mondesc="running on a schedule"
   else monstate=warn; mondesc="not scheduled"; fi
-  _row monitor   '⡗⠦⢄' "$N_CYAN"     "MONITOR"   "$mondesc" "$monstate" \
+  _row monitor   '⣠⠞⠳⣄' "$N_CYAN"     "MONITOR"   "$mondesc" "$monstate" \
        "$([ -f "$MON_LOG" ] && echo "$(grep -c NUDGED "$MON_LOG" 2>/dev/null | head -1) nudges sent" || echo "never run")" \
        "walks sessions and restarts the ones that merely stalled"
   _row posture   '⣿⣿⡀' "$T_ERR"      "POSTURE"   "$nfind finding(s)" \
        "$([ "${ncrit:-0}" -gt 0 ] && echo err || { [ "${nfind:-0}" -gt 0 ] && echo warn || echo ok; })" \
        "$([ "${ncrit:-0}" -gt 0 ] && echo "$ncrit critical" || echo "nothing critical")" \
        "common power-user exposures — reported every launch, fixed only by you"
+  # The alert row reads the CACHED state file, never a live scan: opening the
+  # dashboard must not pay for reading every certificate on disk.
+  local aexp aurg asoon aunk achecked adot aval
+  aexp=0; aurg=0; asoon=0; aunk=0; achecked=""
+  if [ -f "$ALERT_STATE" ]; then
+    local _as; _as="$(cat "$ALERT_STATE" 2>/dev/null)"
+    achecked="$(mon_field "$_as" checked)"
+    aexp="$(mon_field "$_as" expired)";  aurg="$(mon_field "$_as" urgent)"
+    asoon="$(mon_field "$_as" soon)";    aunk="$(mon_field "$_as" unknown)"
+  fi
+  aexp="${aexp:-0}"; aurg="${aurg:-0}"; asoon="${asoon:-0}"; aunk="${aunk:-0}"
+  if   [ "$aexp" -gt 0 ]; then adot=err;  aval="$aexp expired"
+  elif [ "$aurg" -gt 0 ]; then adot=warn; aval="$aurg urgent"
+  elif [ "$asoon" -gt 0 ]; then adot=warn; aval="$asoon due soon"
+  elif [ -n "$achecked" ]; then adot=ok;   aval="nothing due"
+  else adot=none; aval="never scanned"; fi
+  _row alerts    '⡎⠭⢱⠀' "$N_AMBER"   "EXPIRY"    "$aval" "$adot" \
+       "$(alert_scheduled 2>/dev/null && echo "daily at $(alert_schedule_hour):00" || echo "not scheduled")" \
+       "certs and recorded dates, checked on a schedule — $aunk have no date at all"
+  _row keychain  '⣰⣉⣉⣆' "$N_BLUE"    "KEYCHAIN"  "$(kc_available 2>/dev/null && echo "macOS login keychain" || echo "not available here")" \
+       "$(kc_available 2>/dev/null && echo none || echo err)" "import, never delete" \
+       "pull the credentials already sitting in your login keychain into the vault"
   _row doctor    '⠺⣭⠗' "$N_ORANGE"  "DOCTOR"    "$ndoc of $ncred documented" \
        "$([ "${pending:-0}" -gt 0 ] && echo warn || echo ok)" \
        "$([ "${pending:-0}" -gt 0 ] && echo "$pending pending rotation" || echo "nothing pending")" \
@@ -737,6 +759,8 @@ HOMEG
           guard)     guard_screen ;;
           monitor)   monitor_screen ;;
           posture)   posture_screen ;;
+          alerts)    alerts_screen ;;
+          keychain)  keychain_screen ;;
           doctor)    do_doctor; ui_pause ;;
         esac
         tui_begin; tui_dims; hlayout; draw_home
