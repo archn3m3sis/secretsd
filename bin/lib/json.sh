@@ -109,29 +109,7 @@ PY_DOC
 # JSON says so rather than omitting them.
 json_expiring() {
   local days="${1:-30}"
-  : > "$TMPD/exp.json.rec"
-  if [ -f "$SEC_MANIFEST" ]; then
-    local now n exp e left
-    now="$(date +%s)"
-    while IFS= read -r n; do
-      [ -n "$n" ] || continue
-      exp="$(sec_manifest_field "$n" expires)"
-      case "$exp" in
-        none) printf '%s\tnever\t\t\n' "$n" >> "$TMPD/exp.json.rec" ;;
-        ""|TODO|*TODO*) printf '%s\tunknown\t\t\n' "$n" >> "$TMPD/exp.json.rec" ;;
-        *)
-          e="$(sec_epoch_of "$exp")"
-          if [ -z "$e" ]; then
-            printf '%s\tunparseable\t%s\t\n' "$n" "$exp" >> "$TMPD/exp.json.rec"
-          else
-            left=$(( (e - now) / 86400 ))
-            printf '%s\tdated\t%s\t%s\n' "$n" "$exp" "$left" >> "$TMPD/exp.json.rec"
-          fi ;;
-      esac
-    done <<EXPN
-$(sec_names)
-EXPN
-  fi
+  alert_scan "$days" "$days" 2>/dev/null > "$TMPD/exp.json.rec" || true
   python3 - "$TMPD/exp.json.rec" "$days" "${SEC_VERSION:-dev}" <<'PY_EXP'
 import json, sys, socket, datetime
 window = int(sys.argv[2])
@@ -139,20 +117,19 @@ items, expired, soon, unknown = [], 0, 0, 0
 with open(sys.argv[1]) as fh:
     for line in fh:
         line = line.rstrip("\n")
-        if not line:
+        if not line or "|" not in line:
             continue
-        p = (line.split("\t") + ["", "", "", ""])[:4]
-        name, kind, date, left = p
-        rec = {"name": name, "status": kind, "expires": date or None, "days_left": None}
-        if kind == "dated":
-            rec["days_left"] = int(left)
-            if int(left) < 0:      rec["status"] = "expired";  expired += 1
-            elif int(left) <= window: rec["status"] = "soon";  soon += 1
-            else:                  rec["status"] = "ok"
-        elif kind in ("unknown", "unparseable"):
-            unknown += 1
-        items.append(rec)
-rank = {"expired": 0, "soon": 1, "unparseable": 2, "unknown": 3, "ok": 4, "never": 5}
+        p = (line.split("|") + ["", "", "", "", ""])[:5]
+        sev, src, name, detail, left = p
+        try:    left_i = int(left)
+        except ValueError: left_i = None
+        status = "expired" if sev == "expired" else ("soon" if sev in ("urgent", "soon") else "unknown")
+        if status == "expired": expired += 1
+        elif status == "soon":  soon += 1
+        else:                   unknown += 1
+        items.append({"name": name, "status": status, "source": src,
+                      "detail": detail, "days_left": left_i})
+rank = {"expired": 0, "soon": 1, "unknown": 2}
 items.sort(key=lambda r: (rank.get(r["status"], 9),
                           r["days_left"] if r["days_left"] is not None else 10**9))
 print(json.dumps({

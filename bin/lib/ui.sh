@@ -149,7 +149,11 @@ ui_rule() {
   # NOT `tput cols 2>/dev/null` — ncurses asks the terminal over STDERR, so
   # redirecting it makes tput fall back to terminfo's static 80 and report
   # success. Ask the tty directly.
-  local sz; sz="$(stty size </dev/tty 2>/dev/null)"
+  # The 2>/dev/null on stty silences STTY, not bash's own "cannot open
+  # /dev/tty" when there is no controlling terminal — that message went to the
+  # user's stderr and corrupted the top of a piped report. Grouping puts the
+  # failed redirect inside the silenced scope.
+  local sz; sz="$( { stty size </dev/tty; } 2>/dev/null )"
   if [ -n "$sz" ]; then w="${sz##* }"; else w="$(tput cols)"; fi
   case "$w" in ''|*[!0-9]*) w=80 ;; esac
   [ "$w" -gt 100 ] && w=100

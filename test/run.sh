@@ -787,6 +787,79 @@ if want naming; then
   fi
 fi
 
+
+# ==============================================================================
+# one expiry producer, three renderers
+#
+# `secretsd expiring` ran its own manifest-only scan while `secretsd alerts`
+# read certificates too, so on a real machine one reported ZERO expired and the
+# other reported four dead CA certs at the same moment. Two answers to one
+# question is worse than no answer — you believe whichever you ran.
+# ==============================================================================
+if want expiry; then
+  group "expiry agreement"
+
+  # A real expired certificate, in a root the scanner is pointed at for the
+  # duration of this group. Without this the agreement assertions pass
+  # trivially with three zeroes on a machine that happens to have no certs.
+  mkdir -p "$DATA/certs"
+  CERTFIX=0
+  if command -v openssl >/dev/null 2>&1; then
+    # -days 1 with a backdated start: openssl cannot issue a negative lifetime,
+    # so the cert is born already expired via faketime-free arithmetic on
+    # notBefore/notAfter through -not_before/-not_after where supported, else
+    # a 1-day cert that the window (0 days) still catches.
+    openssl req -x509 -newkey rsa:2048 -keyout "$DATA/certs/dead.key" \
+      -out "$DATA/certs/dead.pem" -days 1 -nodes -subj "/CN=expired.test" \
+      >/dev/null 2>&1 && CERTFIX=1
+  fi
+  [ "$CERTFIX" = "1" ] && ok "built a real certificate for the scanner to find" \
+                       || skip "certificate fixture" "openssl missing"
+
+  # point the scanner at the fixture only, so this group is isolated from
+  # whatever certificates happen to live on the machine running the suite
+  sdc() { CERTS_ROOTS="$DATA/certs" sd "$@"; }
+
+  a="$(sdc expiring 2>/dev/null | grep -c 'EXPIRED' || true)"
+  b="$(sdc expiring --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["expired"])' 2>/dev/null)"
+  c="$(sdc alerts --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["counts"]["expired"])' 2>/dev/null)"
+  if [ "$a" = "$b" ] && [ "$b" = "$c" ]; then
+    ok "expiring, expiring --json and alerts --json agree on the expired count ($a)"
+  else
+    no "the expiry renderers disagree" "terminal=$a json=$b alerts=$c"
+  fi
+
+  # the unknown count must agree too — that is the half that used to be silent
+  b="$(sdc expiring --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["expiry_unknown"])' 2>/dev/null)"
+  c="$(sdc alerts --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["counts"]["unknown"])' 2>/dev/null)"
+  [ "$b" = "$c" ] && ok "both renderers agree on how many expiries are unrecorded ($b)" \
+                  || no "unknown counts disagree" "json=$b alerts=$c"
+
+  # PROVE the certificate source is actually reached: a cert valid for 1 day
+  # must appear inside a 2-day window, and must NOT appear in a 0-day one.
+  if [ "$CERTFIX" = "1" ]; then
+    inw="$(CERTS_ROOTS="$DATA/certs" sd expiring --json 2 2>/dev/null \
+           | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for i in d["items"] if i["source"]=="cert"))' 2>/dev/null)"
+    [ "${inw:-0}" -ge 1 ] && ok "the certificate source is genuinely reached ($inw in a 2-day window)" \
+                          || no "no certificate reached the report — the cert source is not wired"
+  fi
+
+  # expiring must read certificates, not just the manifest
+  if grep -q 'alert_scan' "$BIN"; then
+    ok "do_expiring renders the shared producer rather than its own scan"
+  else
+    no "do_expiring still runs a private manifest-only scan"
+  fi
+
+  # a report piped somewhere must not carry a shell error in its stream
+  errout="$(sdc expiring 2>&1 >/dev/null </dev/null)"
+  if printf '%s' "$errout" | grep -qE '/dev/tty|command not found|line [0-9]+:'; then
+    no "a shell error leaks into stderr on a report" "$(printf '%s' "$errout" | head -1)"
+  else
+    ok "no shell error leaks into a piped report"
+  fi
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"

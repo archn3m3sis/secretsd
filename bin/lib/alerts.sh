@@ -41,7 +41,16 @@ alert_log() {
 # --- the scan ----------------------------------------------------------------
 # Emits: severity|source|name|detail|days_left
 #   severity: expired | urgent | soon | unknown
+# alert_scan [SOON_DAYS] [URGENT_DAYS]
+#
+# THE single expiry producer. `secretsd expiring`, `secretsd expiring --json`,
+# the alerts screen and the written report are all renderers over this — because
+# for a while they were not, and `expiring` cheerfully reported ZERO expired
+# while `alerts` reported four dead DoD CA certificates on the same machine at
+# the same moment. Two answers to one question is worse than no answer, since
+# you will believe whichever you happened to run.
 alert_scan() {
+  local soon_w="${1:-$ALERT_SOON}" urgent_w="${2:-$ALERT_URGENT}"
   local now n exp e left
   now="$(date +%s)"
 
@@ -66,9 +75,9 @@ alert_scan() {
             printf 'unknown|manifest|%s|expiry "%s" is not a date this can parse|\n' "$n" "$exp"
           else
             left=$(( (e - now) / 86400 ))
-            if   [ "$left" -lt 0 ];              then printf 'expired|manifest|%s|expired on %s|%s\n' "$n" "$exp" "$left"
-            elif [ "$left" -le "$ALERT_URGENT" ]; then printf 'urgent|manifest|%s|expires %s|%s\n'  "$n" "$exp" "$left"
-            elif [ "$left" -le "$ALERT_SOON" ];   then printf 'soon|manifest|%s|expires %s|%s\n'    "$n" "$exp" "$left"
+            if   [ "$left" -lt 0 ];            then printf 'expired|manifest|%s|expired on %s|%s\n' "$n" "$exp" "$left"
+            elif [ "$left" -le "$urgent_w" ];   then printf 'urgent|manifest|%s|expires %s|%s\n'  "$n" "$exp" "$left"
+            elif [ "$left" -le "$soon_w" ];     then printf 'soon|manifest|%s|expires %s|%s\n'    "$n" "$exp" "$left"
             fi
           fi ;;
       esac
@@ -84,9 +93,9 @@ AMAN
     d="$(certs_days_left "$f" 2>/dev/null)"
     case "$d" in ''|*[!0-9-]*) continue ;; esac
     subj="$(basename "$f")"
-    if   [ "$d" -lt 0 ];               then printf 'expired|cert|%s|expired %s day(s) ago — %s|%s\n' "$subj" "$(( -d ))" "$f" "$d"
-    elif [ "$d" -le "$ALERT_URGENT" ]; then printf 'urgent|cert|%s|expires in %s day(s) — %s|%s\n'   "$subj" "$d" "$f" "$d"
-    elif [ "$d" -le "$ALERT_SOON" ];   then printf 'soon|cert|%s|expires in %s day(s) — %s|%s\n'     "$subj" "$d" "$f" "$d"
+    if   [ "$d" -lt 0 ];             then printf 'expired|cert|%s|expired %s day(s) ago — %s|%s\n' "$subj" "$(( -d ))" "$f" "$d"
+    elif [ "$d" -le "$urgent_w" ];   then printf 'urgent|cert|%s|expires in %s day(s) — %s|%s\n'   "$subj" "$d" "$f" "$d"
+    elif [ "$d" -le "$soon_w" ];     then printf 'soon|cert|%s|expires in %s day(s) — %s|%s\n'     "$subj" "$d" "$f" "$d"
     fi
   done <<ACERT
 $(certs_find 2>/dev/null)

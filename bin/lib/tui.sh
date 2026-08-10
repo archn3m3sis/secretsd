@@ -99,7 +99,8 @@ TUI_COLS=80; TUI_ROWS=24
 # unredirected.
 tui_dims() {
   local sz
-  sz="$(stty size </dev/tty 2>/dev/null)"        # "ROWS COLS"
+  # grouped so bash's own failed-redirect message is silenced too, not just stty's
+  sz="$( { stty size </dev/tty; } 2>/dev/null )"   # "ROWS COLS"
   if [ -n "$sz" ]; then
     TUI_ROWS="${sz%% *}"; TUI_COLS="${sz##* }"
   else
