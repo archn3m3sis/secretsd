@@ -31,6 +31,21 @@ fi
 # and then the plain fallback would read the piped OPTION LIST as the user's
 # answer and bail out. gum interacts over /dev/tty, so that is what we test.
 ui_has_gum() { ui_interactive && command -v gum >/dev/null 2>&1; }
+
+# _gum — every gum invocation, funnelled through one place.
+#
+# gum asks the terminal questions (background colour, cursor position). A real
+# terminal answers by writing into the tty input buffer, and those answers are
+# still sitting there when the next read happens. Draining after each call is
+# the difference between "type your passphrase" and "type your passphrase and
+# also here are 40 characters you did not type".
+_gum() {
+  gum "$@"
+  local __rc=$?
+  ui_drain_tty
+  return $__rc
+}
+
 ui_interactive() { [ -t 1 ] && [ -c /dev/tty ] 2>/dev/null; }
 
 # Read a line from the human, not from whatever is piped into stdin.
@@ -44,11 +59,19 @@ ui_read_secret() {
 }
 
 # --- status lines -------------------------------------------------------------
-ui_ok()   { if ui_has_gum; then gum style --foreground $UI_OK   "✓ $*"; else printf '%s✓%s %s\n' "$UI_FG_OK" "$UI_RS" "$*"; fi; }
-ui_info() { if ui_has_gum; then gum style --foreground $UI_DIM  "• $*"; else printf '%s•%s %s\n' "$UI_D" "$UI_RS" "$*"; fi; }
-ui_note() { if ui_has_gum; then gum style --foreground $UI_INFO "› $*"; else printf '%s›%s %s\n' "$UI_FG_I" "$UI_RS" "$*"; fi; }
-ui_warn() { if ui_has_gum; then gum style --foreground $UI_WARN "! $*"; else printf '%s!%s %s\n' "$UI_FG_WARN" "$UI_RS" "$*" >&2; fi; }
-ui_err()  { if ui_has_gum; then gum style --foreground $UI_ERR  "✗ $*"; else printf '%s✗%s %s\n' "$UI_FG_ERR" "$UI_RS" "$*" >&2; fi; }
+# These are one-line status prints. They used to shell out to `gum style`, which
+# is a whole process that QUERIES the terminal — OSC 11 for the background colour
+# and CPR for the cursor position. A real terminal answers those queries by
+# writing the reply into the tty INPUT buffer. The replies then either print as
+# literal garbage (^[]11;rgb:...) or, worse, get consumed by the next read as if
+# you had typed them — which is how a short passphrase drew 130 bullets.
+#
+# Colour needs no subprocess. These are plain printf now.
+ui_ok()   { printf '%s✓%s %s\n' "$UI_FG_OK"   "$UI_RS" "$*"; }
+ui_info() { printf '%s•%s %s\n' "$UI_D"       "$UI_RS" "$*"; }
+ui_note() { printf '%s›%s %s\n' "$UI_FG_I"    "$UI_RS" "$*"; }
+ui_warn() { printf '%s!%s %s\n' "$UI_FG_WARN" "$UI_RS" "$*" >&2; }
+ui_err()  { printf '%s✗%s %s\n' "$UI_FG_ERR"  "$UI_RS" "$*" >&2; }
 
 # ui_dot STATE -> a coloured health dot + label, for dashboards
 ui_dot() {
@@ -77,24 +100,15 @@ ui_rule() {
 # ui_panel TITLE SUBTITLE — the bordered brand box used at the top of a view
 ui_panel() {
   local title="$1" subtitle="${2:-}"
-  if ui_has_gum; then
-    if [ -n "$subtitle" ]; then
-      gum style --border rounded --border-foreground $UI_ACCENT --padding "0 2" \
-        --margin "1 0 0 0" --foreground $UI_ACCENT --bold "$title" "$subtitle"
-    else
-      gum style --border rounded --border-foreground $UI_ACCENT --padding "0 2" \
-        --margin "1 0 0 0" --foreground $UI_ACCENT --bold "$title"
-    fi
-  else
-    printf '\n%s%s%s\n' "$UI_B$UI_FG_V" "$title" "$UI_RS"
-    [ -n "$subtitle" ] && printf '%s%s%s\n' "$UI_D" "$subtitle" "$UI_RS"
-  fi
+  printf '\n%s%s%s\n' "$UI_B$UI_FG_V" "$title" "$UI_RS"
+  [ -n "$subtitle" ] && printf '%s%s%s\n' "$UI_D" "$subtitle" "$UI_RS"
+  return 0
 }
 
 # --- input widgets ------------------------------------------------------------
 ui_ask() { # $1 prompt  $2 placeholder -> echoes input; nonzero on cancel
   if ui_has_gum; then
-    gum input --prompt "$1 › " --prompt.foreground $UI_ACCENT --placeholder "${2:-}"
+    _gum input --prompt "$1 › " --prompt.foreground $UI_ACCENT --placeholder "${2:-}"
   else
     local v; printf '%s%s:%s ' "$UI_B" "$1" "$UI_RS" >&2; ui_read v || return 1; printf '%s' "$v"
   fi
@@ -117,7 +131,7 @@ ui_ask_secret() { # $1 prompt -> echoes hidden input; nonzero on cancel
 
 ui_confirm() { # $1 question -> 0 = yes
   if ui_has_gum; then
-    gum confirm --selected.background $UI_ACCENT "$1"
+    _gum confirm --selected.background $UI_ACCENT "$1"
   else
     local a; printf '%s%s [y/N]:%s ' "$UI_B" "$1" "$UI_RS" >&2; ui_read a || return 1
     case "$a" in [Yy]*) return 0 ;; *) return 1 ;; esac
@@ -133,7 +147,7 @@ ui_choose() {
   [ -n "$opts" ] || return 1
 
   if ui_has_gum; then
-    printf '%s\n' "$opts" | gum choose --header "$header" --header.foreground $UI_DIM \
+    printf '%s\n' "$opts" | _gum choose --header "$header" --header.foreground $UI_DIM \
       --cursor "❯ " --cursor.foreground $UI_ACCENT \
       --selected.foreground $UI_ACCENT
   else
@@ -152,7 +166,7 @@ ui_choose() {
 ui_filter() {
   local header="${1:-filter}"
   if ui_has_gum; then
-    gum filter --placeholder "type to narrow…" --header "$header" \
+    _gum filter --placeholder "type to narrow…" --header "$header" \
       --header.foreground $UI_DIM --indicator "❯" --indicator.foreground $UI_ACCENT \
       --match.foreground $UI_ACCENT --height 18
   else
@@ -166,7 +180,7 @@ ui_filter() {
 ui_filter_multi() {
   local header="${1:-filter}"
   if ui_has_gum; then
-    gum filter --no-limit --placeholder "type to narrow, tab to mark…" --header "$header" \
+    _gum filter --no-limit --placeholder "type to narrow, tab to mark…" --header "$header" \
       --header.foreground $UI_DIM --indicator "❯" --indicator.foreground $UI_ACCENT \
       --match.foreground $UI_ACCENT --height 18
   else
@@ -178,12 +192,12 @@ ui_filter_multi() {
 
 ui_spin() { # $1 title, rest command
   local title="$1"; shift
-  if ui_has_gum; then gum spin --spinner dot --title "$title" --spinner.foreground $UI_ACCENT -- "$@"
+  if ui_has_gum; then _gum spin --spinner dot --title "$title" --spinner.foreground $UI_ACCENT -- "$@"
   else printf '%s%s…%s\n' "$UI_D" "$title" "$UI_RS" >&2; "$@"; fi
 }
 
 ui_pause() {
-  if ui_has_gum; then gum input --placeholder "press enter to continue" >/dev/null 2>&1 || true
+  if ui_has_gum; then _gum input --placeholder "press enter to continue" >/dev/null 2>&1 || true
   else local _x; printf '%s(enter to continue)%s ' "$UI_D" "$UI_RS"; IFS= read -r _x || true; fi
 }
 
@@ -196,8 +210,19 @@ ui_clear() { ui_interactive && printf '\033[2J\033[H'; }
 #
 # This echoes one • per character, handles backspace, and never puts the value in
 # a variable that survives the call. It is still not shown in the clear.
+# ui_drain_tty — discard bytes the terminal pushed back at us (query replies)
+# before we start treating input as keystrokes.
+ui_drain_tty() {
+  local _junk
+  while IFS= read -r -s -n 64 -t 0.05 _junk </dev/tty 2>/dev/null; do
+    [ -n "$_junk" ] || break
+  done
+  return 0
+}
+
 ui_read_masked() {   # $1 = variable name to set
-  local __var="$1" __s="" __c __mask
+  local __var="$1" __s="" __c
+  ui_drain_tty
   # stty -echo so the terminal does not print, then we draw the mask ourselves
   local __old; __old="$(stty -g </dev/tty 2>/dev/null)"
   stty -echo </dev/tty 2>/dev/null

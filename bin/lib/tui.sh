@@ -537,6 +537,9 @@ tui_kv() {
   local k="$1" v="$2" c="${3:-$T_TEXT}" lead
   lead=$(( TUI_COLS - 6 - ${#k} - ${#v} - 4 ))
   [ "$lead" -lt 1 ] && lead=1
+  # A detail row is read left to right; on a very wide terminal an uncapped
+  # leader becomes two hundred dots and the value ends up in another postcode.
+  [ "$lead" -gt 60 ] && lead=60
   printf '    %s%s %s' "$T_MUTE" "$k" "$T_LEAD"
   tui_repeat '·' "$lead"
   printf ' %s%s%s\n' "$c" "$v" "$T_RS"
