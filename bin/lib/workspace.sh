@@ -783,7 +783,7 @@ WS_ADOPT_TTL="${WS_ADOPT_TTL:-900}"
 ws_scan_sessions() {
   local age now mtime
   if [ -f "$WS_ADOPT_CACHE" ]; then
-    mtime="$(stat -f %m "$WS_ADOPT_CACHE" 2>/dev/null || stat -c %Y "$WS_ADOPT_CACHE" 2>/dev/null)"
+    mtime="$(sec_stat mtime "$WS_ADOPT_CACHE")"
     now="$(date +%s)"; age=$(( now - ${mtime:-0} ))
     [ "$age" -lt "$WS_ADOPT_TTL" ] && { cat "$WS_ADOPT_CACHE"; return 0; }
   fi

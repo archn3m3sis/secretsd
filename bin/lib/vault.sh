@@ -35,7 +35,7 @@ vault_can_decrypt() { sops exec-env "$1" 'true' >/dev/null 2>&1; }
 # vault_mtime PATH -> human-ish age
 vault_mtime() {
   local t now d
-  t="$(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null)"
+  t="$(sec_stat mtime "$1")"
   [ -n "$t" ] || { printf 'unknown'; return; }
   now="$(date +%s)"; d=$(( now - t ))
   if   [ "$d" -lt 60 ];    then printf 'just now'
@@ -45,7 +45,7 @@ vault_mtime() {
 }
 
 vault_size() {
-  local b; b="$(stat -f %z "$1" 2>/dev/null || stat -c %s "$1" 2>/dev/null)"
+  local b; b="$(sec_stat size "$1")"
   [ -n "$b" ] || { printf '?'; return; }
   if [ "$b" -lt 1024 ]; then printf '%sB' "$b"; else printf '%sK' $(( b / 1024 )); fi
 }

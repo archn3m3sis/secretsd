@@ -30,8 +30,36 @@ ulimit -c 0 2>/dev/null || true          # 9: no core dumps carrying plaintext
 SEC_IDLE_TIMEOUT="${SEC_IDLE_TIMEOUT:-600}"   # 8: seconds of inactivity before lock
 
 # --- helpers ------------------------------------------------------------------
-sec_mode()  { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
-sec_owner() { stat -f '%Su' "$1" 2>/dev/null || stat -c '%U' "$1" 2>/dev/null; }
+# --- stat, portably -----------------------------------------------------------
+# `stat -f '%Lp' file 2>/dev/null || stat -c '%a' file` looks like a sensible
+# BSD-then-GNU fallback and is not: on GNU coreutils `-f` means "show the
+# FILESYSTEM containing this file", which succeeds and exits 0. The fallback
+# never runs, the caller gets filesystem output where it expected a mode, and
+# every permission check silently passes. CI on Linux caught this; macOS could
+# not have.
+# Detect by asking for the GNU form directly. Probing the BSD form is
+# ambiguous — `stat -f /` succeeds on macOS as well, since it reads "/" as the
+# format string, so a "does -f work" test picks the wrong branch on macOS.
+if stat -c '%a' / >/dev/null 2>&1; then
+  SEC_STAT=gnu            # GNU coreutils
+else
+  SEC_STAT=bsd            # BSD / macOS
+fi
+sec_stat() {   # $1 = mode|owner|mtime|size   $2 = path
+  case "$SEC_STAT:$1" in
+    bsd:mode)  stat -f '%Lp' "$2" 2>/dev/null ;;
+    gnu:mode)  stat -c '%a'  "$2" 2>/dev/null ;;
+    bsd:owner) stat -f '%Su' "$2" 2>/dev/null ;;
+    gnu:owner) stat -c '%U'  "$2" 2>/dev/null ;;
+    bsd:mtime) stat -f '%m'  "$2" 2>/dev/null ;;
+    gnu:mtime) stat -c '%Y'  "$2" 2>/dev/null ;;
+    bsd:size)  stat -f '%z'  "$2" 2>/dev/null ;;
+    gnu:size)  stat -c '%s'  "$2" 2>/dev/null ;;
+  esac
+}
+
+sec_mode()  { sec_stat mode  "$1"; }
+sec_owner() { sec_stat owner "$1"; }
 
 # sec_mode_bad PATH MAXMODE -> 0 (true) when the file is more permissive
 sec_mode_bad() {

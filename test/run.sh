@@ -163,6 +163,25 @@ if want "return-channel"; then
     && ok "rec_build reserves stdout as its return channel" \
     || no "rec_build draws on stdout — the caller will capture the drawing"
 fi
+if want "stat-portable"; then
+  # `stat -f` on GNU means "show the filesystem" and exits 0, so a
+  # `stat -f … || stat -c …` fallback never reaches the GNU branch. Linux CI
+  # caught this as "the permission warning never appeared"; macOS could not.
+  hits="$(grep -rn 'stat -f.*||.*stat -c' "$ROOT/bin" 2>/dev/null | grep -vE ':[0-9]+: *#' | grep -c . || true)"
+  if [ "${hits:-0}" = "0" ]; then ok "no BSD-then-GNU stat fallback (it never falls back)"
+  else no "BSD-then-GNU stat fallback present" "$hits instance(s)"; fi
+fi
+if want "stat-works"; then
+  m="$(bash -c '
+    SEC_ROOT="'"$DATA"'"; TMPD=$(mktemp -d); SEC_BIN="'"$ROOT"'/bin"
+    export SEC_ROOT TMPD SEC_BIN
+    for l in ui store security; do . "$SEC_BIN/lib/$l.sh" 2>/dev/null; done
+    sec_mode "'"$DATA"'/secrets/api-keys.enc.env"; rm -rf $TMPD' 2>/dev/null)"
+  case "$m" in
+    600) ok "sec_mode returns a real octal mode on this platform" ;;
+    *)   no "sec_mode returned '$m', expected 600" ;;
+  esac
+fi
 if want "tput-stderr"; then
   # `tput cols 2>/dev/null` silently returns the terminfo default
   if grep -rn 'tput cols 2>/dev/null' "$ROOT/bin" 2>/dev/null | grep -qvE ':[0-9]+: *#' ; then

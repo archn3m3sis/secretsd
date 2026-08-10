@@ -165,7 +165,7 @@ SEC_POSTURE_TTL="${SEC_POSTURE_TTL:-300}"
 posture_scan_cached() {
   local age now mtime
   if [ -f "$SEC_POSTURE_CACHE" ]; then
-    mtime="$(stat -f %m "$SEC_POSTURE_CACHE" 2>/dev/null || stat -c %Y "$SEC_POSTURE_CACHE" 2>/dev/null)"
+    mtime="$(sec_stat mtime "$SEC_POSTURE_CACHE")"
     now="$(date +%s)"; age=$(( now - ${mtime:-0} ))
     if [ "$age" -lt "$SEC_POSTURE_TTL" ]; then cat "$SEC_POSTURE_CACHE"; return 0; fi
   fi
