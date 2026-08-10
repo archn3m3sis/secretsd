@@ -13,7 +13,11 @@
 #
 # Sourced, never executed.
 
-export DNS_TOKEN_KEY="${DNS_TOKEN_KEY:-CF_DNS_EDIT_TOKEN}"
+# NOT exported. `secretsd run` layers the store over the caller's environment,
+# and an exported config variable is then indistinguishable from a credential in
+# the child — it even showed up as a false positive in a leak audit. Passed
+# explicitly to the one call that needs it instead.
+DNS_TOKEN_KEY="${DNS_TOKEN_KEY:-CF_DNS_EDIT_TOKEN}"
 DNS_API="https://api.cloudflare.com/client/v4"
 
 # dns_api METHOD PATH [JSON_BODY] -> raw JSON on stdout
@@ -41,7 +45,7 @@ fi
 CALL
   # DNS_TOKEN_KEY is already exported at file scope; re-assigning it in the
   # prefix made shellcheck think the expansion below could not see it.
-  DNS_METHOD="$method" DNS_URL="$DNS_API$path" DNS_BODY="$body" \
+  DNS_TOKEN_KEY="$DNS_TOKEN_KEY" DNS_METHOD="$method" DNS_URL="$DNS_API$path" DNS_BODY="$body" \
     "$SEC_SELF" run --only "$DNS_TOKEN_KEY" -- bash "$script" 2>/dev/null
 }
 

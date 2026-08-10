@@ -88,12 +88,12 @@ pkm_draw_obsidian() {
 # id|mark|label|state|detect-hint
 pkm_systems() {
   cat <<'SYS'
-obsidian|⢴⣿⡦|Obsidian|active|markdown vault on disk — fully wired
-apple-notes|⣏⣿⣯|Apple Notes|soon|AppleScript bridge, not built yet
-notepad|⣗⣓⣳|Notepad|soon|plain text directory, not built yet
-cherrytree|⠴⣿⠦|CherryTree|soon|SQLite .ctb document, not built yet
-notion|⣿⠢⣿|Notion|soon|hosted API, needs egress — not built yet
-joplin|⢭⣹⠏|Joplin|soon|local REST API, not built yet
+obsidian|⢴⣿⡦|Obsidian|active|markdown vault with frontmatter and tags
+plaintext|⣗⣓⣳|Plain markdown|active|a folder of .md — Notepad, or any editor
+apple-notes|⣏⣿⣯|Apple Notes|active|via osascript, into a named folder
+joplin|⢭⣹⠏|Joplin|active|local clipper API on 127.0.0.1:41184
+cherrytree|⠴⣿⠦|CherryTree|soon|its .ctb is a live SQLite doc — unsafe to write into
+notion|⣿⠢⣿|Notion|soon|hosted, needs egress and a token
 SYS
 }
 
@@ -209,7 +209,21 @@ EOF
       enter|right)
         if [ "${P_STATE[$sel]}" = active ]; then
           pkm_set system "${P_ID[$sel]}"
-          [ -n "$obsvault" ] && pkm_set vault "$obsvault"
+          case "${P_ID[$sel]}" in
+            obsidian)
+              [ -n "$obsvault" ] && pkm_set vault "$obsvault" ;;
+            plaintext)
+              tui_end
+              local d; d="$(ui_ask 'Folder for the notes' "$HOME/notes")"
+              [ -n "$d" ] || d="$HOME/notes"
+              case "$d" in "~"*) d="$HOME${d#\~}" ;; esac
+              mkdir -p "$d" && pkm_set vault "$d" ;;
+            joplin)
+              tui_end
+              ui_note "Joplin → Tools → Options → Web Clipper → copy the authorisation token"
+              local t; t="$(ui_ask 'Joplin API token' '')"
+              [ -n "$t" ] && pkm_set joplin_token "$t" ;;
+          esac
           pkm_set paired "$(date +%F)"
           tui_end
           ui_ok "paired with ${P_LABEL[$sel]}"
