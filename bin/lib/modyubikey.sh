@@ -44,7 +44,7 @@ yk_piv_slots() {
 yk_fido_info() { ykman fido info 2>/dev/null; }
 
 yubikey_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty yubikey; return 1; }
 
   if ! yk_have; then
     tui_page "YUBIKEY" "ykman is not installed"

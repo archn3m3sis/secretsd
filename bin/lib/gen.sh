@@ -83,7 +83,7 @@ gen_entropy_bits() {
 
 # --- the screen ---------------------------------------------------------------
 gen_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty gen; return 1; }
   local kind len value name bits setsize
 
   tui_page "GENERATE" "the value goes straight into the vault — it is never printed"

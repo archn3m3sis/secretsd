@@ -264,7 +264,7 @@ ws_open_editor() {
 
 # --- the screen ---------------------------------------------------------------
 ws_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty workspace; return 1; }
   local -a W_PATH W_NAME W_BRANCH W_DIRTY W_AGE W_STACK W_CREDS W_UNREAD W_LINE
   local n=0 p name
 
@@ -443,7 +443,7 @@ EOF
 # The index that makes the UUIDs irrelevant: your names, what each run was for,
 # and whether its transcript still exists. Resume by name, never by UUID.
 ws_sessions_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty sessions "secretsd sessions --json   the session inventory"; return 1; }
   local -a S_ID S_NAME S_PROJ S_PATH S_MODE S_WHEN S_TRANS S_LIVE S_LINE
   local n=0 u
   while IFS= read -r u; do
@@ -895,7 +895,7 @@ ws_is_adopted() { ws_session_ids | grep -qx "$1"; }
 
 # --- the screen ---------------------------------------------------------------
 ws_adopt_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty adopt; return 1; }
   local -a A_ID A_CWD A_TITLE A_WHEN A_MSGS A_SUB A_DONE A_LINE
   local n=0 uuid cwd title when msgs sub
 

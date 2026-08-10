@@ -177,7 +177,7 @@ guard_selftest() {
 }
 
 guard_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty guard "secretsd guard install <repo>" "secretsd guard selftest"; return 1; }
   local -a G_PATH G_NAME G_ON G_LINE
   local n=0 p
 

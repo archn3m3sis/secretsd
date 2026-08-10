@@ -204,7 +204,7 @@ rec_verify() {
 }
 
 recovery_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty recovery; return 1; }
   REC_PASS=""
   trap 'REC_PASS=""' RETURN
   local keyfile="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"

@@ -48,6 +48,33 @@ _gum() {
 
 ui_interactive() { [ -t 1 ] && [ -c /dev/tty ] 2>/dev/null; }
 
+# ui_needs_tty NAME [ALTERNATIVE...] — say why nothing happened, then fail.
+#
+# Every full-screen module used to be guarded by `ui_interactive || return 0`,
+# which meant that running one without a terminal — a pipe, a redirect, cron,
+# CI, or an editor's "run this command" box — did the work of nothing and
+# reported success. A command that produces no output and exits 0 is
+# indistinguishable from a command that is broken, and it wasted a real
+# debugging session before this existed.
+#
+# Goes to stderr, so a caller redirecting stdout still sees it, and returns 1,
+# because the screen did not run.
+ui_needs_tty() {
+  local what="$1"; shift
+  {
+    printf '\n  secretsd %s is a full-screen module and needs an interactive terminal.\n' "$what"
+    printf '  This is not one (a pipe, a redirect, cron, CI, or an editor run box).\n\n'
+    if [ $# -gt 0 ]; then
+      printf '  What you can run here instead:\n'
+      local a; for a in "$@"; do printf '     %s\n' "$a"; done
+      printf '\n'
+    fi
+    printf '  For the module itself, run this in your terminal:\n'
+    printf '     secretsd %s\n\n' "$what"
+  } >&2
+  return 1
+}
+
 # Read a line from the human, not from whatever is piped into stdin.
 ui_read() { # $1 = variable name to set
   if [ -t 0 ]; then IFS= read -r "$1"

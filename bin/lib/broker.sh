@@ -203,7 +203,7 @@ broker_purge() {   # $1 uuid  $2 transcript path
 
 # --- the merge / archive / purge screen ---------------------------------------
 broker_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty broker; return 1; }
   broker_have || { tui_page "SESSION BROKER" "claude CLI not on PATH"; ui_pause; return 0; }
 
   local -a B_ID B_NAME B_PROJ B_PATH B_TR B_WHEN B_MSGS B_MARK B_LINE
@@ -406,7 +406,7 @@ jan_field() { printf '%s' "$1" | awk -F': *' -v k="$2" '$1==k {sub(/^[^:]*: */,"
 
 # janitor_screen — survey a bounded batch, then let you act one at a time
 janitor_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty janitor; return 1; }
   broker_have || { tui_page "JANITOR" "claude CLI not on PATH"; ui_pause; return 0; }
 
   local -a J_ID J_NAME J_PATH J_TR J_WHEN J_MSGS J_VERDICT J_TOPIC J_REASON J_LINE

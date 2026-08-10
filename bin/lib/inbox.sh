@@ -100,7 +100,7 @@ prov_age() {   # $1 iso8601 -> "3h ago"
 
 # --- the screen ---------------------------------------------------------------
 inbox_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty inbox; return 1; }
   local -a I_KEY I_AGENT I_PROJ I_REASON I_AGE I_SEEN I_LINE
   local n=0 k
   while IFS= read -r k; do

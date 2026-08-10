@@ -87,7 +87,7 @@ keys_in_authorized() {   # $1 key path -> 0 if its public half is authorized her
 
 # --- the screen ---------------------------------------------------------------
 keys_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty keys "secretsd posture --json    SSH key findings, machine-readable"; return 1; }
   local -a K_PATH K_NAME K_TYPE K_BITS K_FP K_PASS K_MODE K_HOSTS K_AUTH K_AGENT K_LINE
   local n=0 p
 

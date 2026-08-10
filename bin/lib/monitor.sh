@@ -219,7 +219,7 @@ mon_schedule_remove() {
 
 # --- the screen ---------------------------------------------------------------
 monitor_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty monitor; return 1; }
   broker_have || { tui_page "MONITOR" "claude CLI not on PATH"; ui_pause; return 0; }
 
   local act sched

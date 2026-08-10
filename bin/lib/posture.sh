@@ -259,7 +259,7 @@ posture_sev_colour() {
 # you to press f, GUIDED findings only ever show you the commands. The program
 # keeps reporting every launch until you decide — it never decides for you.
 posture_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty posture "secretsd posture --json    every finding, machine-readable"; return 1; }
   local -a P_SEV P_ID P_KIND P_TITLE P_DETAIL P_TARGET P_STATE O_LINE
   local n=0 line sev id kind title detail target
 

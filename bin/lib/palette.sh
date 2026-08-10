@@ -118,7 +118,7 @@ pal_type_glyph() {
 
 # --- the palette --------------------------------------------------------------
 palette_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty find "secretsd names             list every credential name"; return 1; }
   local idx pick type label ctx target
 
   ui_clear

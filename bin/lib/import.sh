@@ -248,7 +248,7 @@ json.dump(base, sys.stdout)
 
 # --- the screen ---------------------------------------------------------------
 import_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty import; return 1; }
   local src fmt dest count preview
 
   dest="$SEC_ENC_DIR/logins.enc.yaml"

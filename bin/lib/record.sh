@@ -123,7 +123,7 @@ rec_delete() { if rec_enc "$1"; then rece_delete "$1" "$2"; else recp_delete "$1
 # rec_screen MODULE_ID TITLE FILE SUBTITLE "field1 field2 …" SUMMARY_FIELD
 rec_screen() {
   local mid="$1" title="$2" file="$3" subtitle="$4" schema="$5" sumf="$6"
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty record; return 1; }
 
   local -a R_ID R_LINE
   local n=0 r glyph hue
@@ -368,7 +368,7 @@ pii_screen() {
 # and the manifest already records which credentials each project uses. Seeding
 # writes what is TRUE and marks the rest TODO rather than inventing it.
 env_seed_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty record; return 1; }
   local file="$SEC_DIR_DIR/environments.yaml"
 
   tui_page "SEED ENVIRONMENTS" "from discovered projects — facts only, no invention"

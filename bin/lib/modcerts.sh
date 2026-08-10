@@ -46,7 +46,7 @@ certs_days_left() {
 }
 
 certs_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty certs "secretsd alerts            certificate expiry, as text"; return 1; }
   local -a C_PATH C_CN C_DAYS C_END C_N C_LINE
   local n=0 f d
 

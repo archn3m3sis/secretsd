@@ -49,7 +49,7 @@ mach_reachable() {
 }
 
 machines_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty machines; return 1; }
   local -a M_ALIAS M_HN M_USER M_PORT M_IDF M_KEYOK M_REACH M_LINE
   local n=0 alias hn user port idf p
 

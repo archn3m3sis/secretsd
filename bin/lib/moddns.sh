@@ -69,7 +69,7 @@ dns_record_get() {   # $1 zone  $2 record -> pretty JSON
 }
 
 dns_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty dns; return 1; }
 
   if ! sec_has "$DNS_TOKEN_KEY"; then
     tui_page "DOMAIN MANAGEMENT" "no Cloudflare token in the vault"

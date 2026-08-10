@@ -43,7 +43,7 @@ audit_kind_colour() {
 }
 
 audit_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty audit "secretsd logs prune [KEEP]   prune the run-log directory"; return 1; }
   local -a E_WHEN E_KIND E_DETAIL E_LINE
   local n=0 ep when kind detail
 

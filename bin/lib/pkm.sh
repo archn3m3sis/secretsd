@@ -125,7 +125,7 @@ pkm_set() {   # $1 field  $2 value
 
 # --- the screen ---------------------------------------------------------------
 pkm_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty pkm; return 1; }
   local -a P_ID P_MARK P_LABEL P_STATE P_NOTE P_LINE
   local n=0 id mark label state note
   while IFS='|' read -r id mark label state note; do

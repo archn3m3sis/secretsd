@@ -386,7 +386,7 @@ $prefix$collected" --output-format text 2>/dev/null)"
 
 # --- the screen ---------------------------------------------------------------
 profiles_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty profiles; return 1; }
   broker_have || { tui_page "SESSION PROFILES" "claude CLI not on PATH"; ui_pause; return 0; }
 
   local -a P_ID P_TITLE P_BLURB P_GLYPH P_HUEV P_LINE

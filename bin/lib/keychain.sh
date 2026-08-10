@@ -99,7 +99,7 @@ kc_keyname() {
 }
 
 keychain_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty keychain; return 1; }
 
   if ! kc_available; then
     tui_page "KEYCHAIN IMPORT" "macOS only"

@@ -255,7 +255,7 @@ SS
 
 # --- the screen ---------------------------------------------------------------
 notes_screen() {
-  ui_interactive || return 0
+  ui_interactive || { ui_needs_tty notes; return 1; }
 
   local sys; sys="$(notes_system)"
   if [ -z "$sys" ] || [ "$sys" = "none" ]; then

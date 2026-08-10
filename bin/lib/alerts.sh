@@ -249,8 +249,55 @@ alert_schedule_hour() {
 }
 
 # --- screen ------------------------------------------------------------------
+# alert_report_text — the plain-text report, for anything that is not a TUI:
+# a pipe, a redirect, CI, or a shell with no controlling terminal. This exists
+# because the first version sent the non-interactive path to /dev/null and
+# "succeeded" in total silence, which is indistinguishable from doing nothing.
+alert_report_text() {
+  local recs="$1" rc="$2" sev label body more
+  printf '\n  CREDENTIAL EXPIRY — %s\n' "$(date '+%Y-%m-%d %H:%M %Z')"
+  printf '  host %s · thresholds: urgent ≤%sd, soon ≤%sd\n\n' \
+    "$(hostname -s 2>/dev/null)" "$ALERT_URGENT" "$ALERT_SOON"
+
+  for sev in expired urgent soon; do
+    case "$sev" in
+      expired) label="EXPIRED — already broken, you just have not hit it yet" ;;
+      urgent)  label="URGENT — inside $ALERT_URGENT days" ;;
+      soon)    label="SOON — inside $ALERT_SOON days" ;;
+    esac
+    body="$(printf '%s\n' "$recs" | awk -F'|' -v s="$sev" '$1==s')"
+    [ -n "$body" ] || continue
+    printf '  %s\n' "$label"
+    printf '%s\n' "$body" | awk -F'|' '{printf "    %-28s %s\n", substr($3,1,28), $4}'
+    printf '\n'
+  done
+
+  body="$(printf '%s\n' "$recs" | awk -F'|' '$1=="unknown"')"
+  if [ -n "$body" ]; then
+    more="$(printf '%s\n' "$body" | sec_nlines)"
+    printf '  NO EXPIRY RECORDED — %s credential(s), which is itself a finding\n' "$more"
+    printf '%s\n' "$body" | head -8 | awk -F'|' '{printf "    %s\n", $3}'
+    [ "$more" -gt 8 ] && printf '    … and %s more\n' "$(( more - 8 ))"
+    printf '\n'
+  fi
+
+  case "$rc" in
+    0) printf '  Nothing expired and nothing due.\n' ;;
+    *) printf '  Full report: %s\n' "$ALERT_REPORT" ;;
+  esac
+  printf '  This never rotates or renews anything. It reports, and keeps reporting.\n\n'
+}
+
 alerts_screen() {
-  ui_interactive || { alert_run >/dev/null; return $?; }
+  # No terminal (a pipe, `!` from an editor, cron, CI): run the scan and PRINT
+  # the result. Never exit silently — a command that does its work and shows
+  # nothing is indistinguishable from a command that did nothing at all.
+  if ! ui_interactive; then
+    local recs rc
+    recs="$(alert_run)"; rc=$?
+    alert_report_text "$recs" "$rc"
+    return $rc
+  fi
 
   while :; do
     local expired=0 urgent=0 soon=0 unknown=0 checked="never"

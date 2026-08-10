@@ -569,6 +569,44 @@ if want keychain; then
   fi
 fi
 
+
+# ==============================================================================
+# no command may be silent
+#
+# Every full-screen module used to be guarded by `ui_interactive || return 0`,
+# so running one without a terminal did nothing and exited 0. A command that
+# produces no output and reports success is indistinguishable from one that is
+# broken — this cost a live debugging session, so it is now a test.
+# ==============================================================================
+if want silence; then
+  group "silence"
+
+  quiet=""
+  for c in keychain broker janitor profiles recovery notes inbox pkm workspace \
+           monitor audit import posture keys certs machines dns yubikey find \
+           gen guard sessions adopt record alerts; do
+    out="$(sd "$c" 2>&1 </dev/null | tr -d '[:space:]')"
+    [ -n "$out" ] || quiet="$quiet $c"
+  done
+  [ -z "$quiet" ] && ok "no command exits silently without a terminal" \
+                  || no "silent command(s):$quiet"
+
+  # and the explanation must go to STDERR, so `secretsd posture > f` still shows it
+  errout="$(sd posture 2>&1 >/dev/null </dev/null | tr -d '[:space:]')"
+  [ -n "$errout" ] && ok "the no-terminal explanation goes to stderr" \
+                   || no "the explanation is on stdout, so a redirect hides it"
+
+  # a screen that could not run must NOT report success
+  sd posture >/dev/null 2>&1 </dev/null && no "a screen that did not run exited 0" \
+                                        || ok "a screen that could not run exits non-zero"
+
+  # the guard is only meaningful if the pattern itself is gone
+  hits="$(grep -rn 'ui_interactive || return 0' "$ROOT/bin" 2>/dev/null \
+          | grep -vE ':[0-9]+: *#' | grep -c . || true)"
+  [ "${hits:-0}" = "0" ] && ok "no bare silent-return tty guard remains in the source" \
+                         || no "$hits silent tty guard(s) still present"
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"
