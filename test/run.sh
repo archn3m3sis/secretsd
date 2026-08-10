@@ -340,7 +340,7 @@ if want "render"; then
     bad=""; sizes="70x18 100x24 200x30"
     for size in $sizes; do
       c="${size%x*}"; r="${size#*x}"
-      for s in "" home posture keys api vaults workspace; do
+      for s in "" home posture keys api vaults workspace alerts; do
         n="$(SD_BIN="$BIN" SECRETSD_HOME="$DATA" SOPS_AGE_KEY_FILE="$AGE_KEY" \
              python3 "$SHOT" "$c" "$r" $s 2>/dev/null | grep -c '│')"
         [ "$n" -ge "$r" ] || bad="$bad ${s:-entry}@$size"

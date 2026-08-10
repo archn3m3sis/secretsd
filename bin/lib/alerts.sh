@@ -279,16 +279,25 @@ alerts_screen() {
     ui_note "This never rotates or renews anything. It reports, and keeps reporting."
     printf '\n'
 
-    local pick
-    pick="$(tui_menu 'EXPIRY ALERTS' \
-      "s|scan now|run the full scan and show what it finds" \
-      "r|read the report|the written report from the last scan" \
-      "e|schedule daily|install the launchd agent (verified after install)" \
-      "x|remove the schedule|stop the daily check" \
-      "q|back|")" || return 0
+    # tui_menu is TITLE, SUBTITLE, then "label|description" items, and it
+    # returns the LABEL. Its own summary line carries the state, because the
+    # menu repaints the screen over anything drawn above it.
+    local pick summary
+    if   [ "${expired:-0}" -gt 0 ]; then summary="$expired EXPIRED · $unknown with no recorded date"
+    elif [ "${urgent:-0}" -gt 0 ];  then summary="$urgent urgent · $soon soon · $unknown with no recorded date"
+    elif [ "${soon:-0}" -gt 0 ];    then summary="$soon due within $ALERT_SOON days · $unknown with no recorded date"
+    elif [ -n "$checked" ];         then summary="nothing due · $unknown with no recorded date · checked $checked"
+    else summary="never scanned"; fi
+
+    pick="$(tui_menu "EXPIRY ALERTS" "$summary" \
+      "Scan now|read every certificate and recorded date, and say what is dying" \
+      "Read the report|the written report from the last scan" \
+      "Schedule it daily|a launchd agent that checks and notifies without being asked" \
+      "Stop the schedule|remove the daily check" \
+      "Back|change nothing")" || return 0
 
     case "$pick" in
-      s)
+      "Scan now")
         ui_clear; printf '\n  '; tui_grad_violet 'scanning manifest expiry and certificates on disk…'; printf '\n\n'
         local recs; recs="$(alert_run)"; local rc=$?
         if [ -z "$(printf '%s' "$recs" | tr -d '[:space:]')" ]; then
@@ -313,7 +322,7 @@ alerts_screen() {
           ui_note "written to $ALERT_REPORT"
         fi
         printf '\n'; ui_pause ;;
-      r)
+      "Read the report")
         if [ -f "$ALERT_REPORT" ]; then
           ui_clear; printf '\n'
           if command -v glow >/dev/null 2>&1; then glow -p "$ALERT_REPORT"
@@ -321,7 +330,7 @@ alerts_screen() {
         else
           ui_warn "no report yet — run a scan first"; ui_pause
         fi ;;
-      e)
+      "Schedule it daily")
         if [ "$(uname -s)" != "Darwin" ]; then
           ui_err "scheduling here is launchd, which is macOS only"
           ui_note "on Linux, add a cron entry:  0 9 * * *  $SEC_SELF alerts run"
@@ -339,11 +348,11 @@ alerts_screen() {
           ui_note "check: launchctl load $ALERT_PLIST"
         fi
         ui_pause ;;
-      x)
+      "Stop the schedule")
         if alert_schedule_remove; then ui_ok "removed — verified gone from launchctl"
         else ui_err "still present in launchctl"; fi
         ui_pause ;;
-      q|"") return 0 ;;
+      *) return 0 ;;
     esac
   done
 }
