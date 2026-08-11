@@ -53,36 +53,38 @@ keys_type()    { keys_fingerprint "$1" | awk '{print $NF}' | tr -d '()'; }
 # file's mtime and size. Re-encrypting a key with a passphrase rewrites it, and
 # the next scan re-probes. A cache that could go stale here would be dangerous:
 # it would keep reporting a key as protected after you removed the passphrase.
-declare -A KEYS_PASS_MAP=()
-KEYS_PASS_LOADED=0
 keys_pass_cachefile() { printf '%s/state/key-passphrase' "${SEC_ROOT:-$HOME}"; }
-keys_pass_load() {
-  [ "$KEYS_PASS_LOADED" = "1" ] && return 0
-  KEYS_PASS_LOADED=1
-  local c p st v; c="$(keys_pass_cachefile)"
-  [ -f "$c" ] || return 0
-  while IFS="$(printf '\t')" read -r p st v; do
-    [ -n "$p" ] || continue
-    KEYS_PASS_MAP["$p:$st"]="$v"
-  done < "$c"
-}
 
-# $1 path  [$2 stamp] — callers that already stat'd the file pass the stamp in,
-# which is how posture_scan avoids two more forks per key.
+# keys_has_passphrase PATH [STAMP] [CACHED]
+#   0 = the key is protected, 1 = it is a bearer credential on disk.
+#
+# The probe is `ssh-keygen -y -P ''`, the only honest way to ask: it succeeds
+# only when there is no passphrase. It costs a fork, and posture_scan asks for
+# every key on the machine.
+#
+# The answer changes only when the key FILE changes, so it is cached against the
+# file's mtime and size. A caller that has already read the cache passes the
+# verdict in as CACHED, which is how posture_scan avoids re-reading it per key.
+# No associative arrays: macOS ships bash 3.2, which does not have them.
 keys_has_passphrase() {
-  local f="$1" cache stamp hit
-  cache="$(keys_pass_cachefile)"
-  stamp="${2:-}"
-  [ -n "$stamp" ] || stamp="$(sec_stat mtime "$f" 2>/dev/null)-$(sec_stat size "$f" 2>/dev/null)"
+  local f="$1" stamp="${2:-}" cached="${3:-}" cache verdict rc
 
-  keys_pass_load
-  hit="${KEYS_PASS_MAP[$f:$stamp]:-}"
-  case "$hit" in
+  case "$cached" in
     yes) return 0 ;;
     no)  return 1 ;;
   esac
 
-  local verdict rc
+  cache="$(keys_pass_cachefile)"
+  [ -n "$stamp" ] || stamp="$(sec_stat mtime "$f" 2>/dev/null)-$(sec_stat size "$f" 2>/dev/null)"
+
+  if [ -f "$cache" ]; then
+    cached="$(awk -F'\t' -v p="$f" -v s="$stamp" '$1==p && $2==s {print $3; exit}' "$cache")"
+    case "$cached" in
+      yes) return 0 ;;
+      no)  return 1 ;;
+    esac
+  fi
+
   if ssh-keygen -y -P '' -f "$f" >/dev/null 2>&1; then verdict=no;  rc=1
   else                                                 verdict=yes; rc=0; fi
 
@@ -92,11 +94,9 @@ keys_has_passphrase() {
   fi
   printf '%s\t%s\t%s\n' "$f" "$stamp" "$verdict" >> "$cache"
   chmod 600 "$cache" 2>/dev/null
-  KEYS_PASS_MAP["$f:$stamp"]="$verdict"
   return "$rc"
 }
 
-# keys_hosts_using PATH -> Host aliases whose IdentityFile resolves to this key
 # keys_hosts_map -> "keybasename<TAB>host host host" for EVERY key, in one pass.
 #
 # keys_hosts_using awk-parses the whole ~/.ssh/config for ONE key. posture_scan

@@ -104,56 +104,54 @@ sec_audit_permissions() {   # $1 = repair? (0/1)  -> prints findings, returns 1 
   local repair="${1:-0}" bad=0 f me kd
   me="$(id -un)"
 
-  # Collect every path FIRST, then ask stat once. The previous version called
-  # sec_mode/sec_owner per file — two forks each, ~15 files — and it runs on
-  # every launch of the program, including the dashboard.
-  local -a paths=() kinds=()
-  if [ -f "$SOPS_AGE_KEY_FILE" ]; then
-    paths+=("$SOPS_AGE_KEY_FILE"); kinds+=(key)
-    kd="$(dirname "$SOPS_AGE_KEY_FILE")"
-    paths+=("$kd"); kinds+=(keydir)
-  fi
+  # Grouped by KIND, one stat call per group — NOT an associative array keyed by
+  # path. macOS ships bash 3.2, which has no associative arrays at all, and the
+  # version that used them passed on a Homebrew bash 5 and broke on the system
+  # one. Four stat calls beats fifteen and works everywhere.
+  local -a stores=() metas=()
   for f in "$SEC_SECRETS"/*.enc.* "$SEC_ENC_DIR"/*.enc.*; do
-    [ -f "$f" ] || continue
-    paths+=("$f"); kinds+=(store)
+    [ -f "$f" ] && stores+=("$f")
   done
   for f in "$SEC_SECRETS"/*.yaml "$SEC_SECRETS"/*.md; do
-    [ -f "$f" ] || continue
-    paths+=("$f"); kinds+=(meta)
+    [ -f "$f" ] && metas+=("$f")
   done
-  [ "${#paths[@]}" -gt 0 ] || return 0
 
-  # one stat call for all of them
-  local -A MODE=() OWNER=()
   local sp sm so smt sz
-  while IFS="$(printf '\t')" read -r sp sm so smt sz; do
-    [ -n "$sp" ] || continue
-    MODE["$sp"]="$sm"; OWNER["$sp"]="$so"
-  done <<STATB
-$(sec_stat_batch "${paths[@]}")
-STATB
+  # the age private key: mode AND ownership
+  if [ -f "$SOPS_AGE_KEY_FILE" ]; then
+    kd="$(dirname "$SOPS_AGE_KEY_FILE")"
+    while IFS="$(printf '\t')" read -r sp sm so smt sz; do
+      [ -n "$sp" ] || continue
+      if [ "$sp" = "$SOPS_AGE_KEY_FILE" ] && [ -n "$so" ] && [ "$so" != "$me" ]; then
+        printf 'OWNER %s %s\n' "$sp" "$so"; bad=1
+      fi
+      case "$sm" in
+        *[1-7][0-7]|*[0-7][1-7])
+          printf 'MODE %s %s\n' "$sp" "$sm"
+          if [ "$repair" = "1" ]; then
+            if [ "$sp" = "$kd" ]; then chmod 700 "$sp"; else chmod 600 "$sp"; fi
+          fi
+          bad=1 ;;
+      esac
+    done <<STATK
+$(sec_stat_batch "$SOPS_AGE_KEY_FILE" "$kd")
+STATK
+  fi
 
-  local i=0 n="${#paths[@]}" path kind mode owner
-  while [ "$i" -lt "$n" ]; do
-    path="${paths[$i]}"; kind="${kinds[$i]}"
-    mode="${MODE[$path]:-}"; owner="${OWNER[$path]:-}"
-    i=$(( i + 1 ))
-    [ -n "$mode" ] || continue
-
-    if [ "$kind" = key ] && [ -n "$owner" ] && [ "$owner" != "$me" ]; then
-      printf 'OWNER %s %s\n' "$path" "$owner"; bad=1
-    fi
-
-    # group or other bits set at all is too open for any of these
-    case "$mode" in
-      *[1-7][0-7]|*[0-7][1-7])
-        printf 'MODE %s %s\n' "$path" "$mode"
-        if [ "$repair" = "1" ]; then
-          case "$kind" in keydir) chmod 700 "$path" ;; *) chmod 600 "$path" ;; esac
-        fi
-        bad=1 ;;
-    esac
-  done
+  # stores and metadata: mode only
+  if [ "${#stores[@]}" -gt 0 ] || [ "${#metas[@]}" -gt 0 ]; then
+    while IFS="$(printf '\t')" read -r sp sm so smt sz; do
+      [ -n "$sp" ] || continue
+      case "$sm" in
+        *[1-7][0-7]|*[0-7][1-7])
+          printf 'MODE %s %s\n' "$sp" "$sm"
+          [ "$repair" = "1" ] && chmod 600 "$sp"
+          bad=1 ;;
+      esac
+    done <<STATS
+$(sec_stat_batch ${stores[@]+"${stores[@]}"} ${metas[@]+"${metas[@]}"})
+STATS
+  fi
 
   return $(( bad == 0 ? 0 : 1 ))
 }

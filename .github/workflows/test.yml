@@ -38,11 +38,15 @@ jobs:
       - name: bash version
         shell: bash
         run: |
-          # macOS ships bash 3.2; secretsd needs 4+. The runner's brew bash is 5.
+          # macOS ships bash 3.2.57 and always will. This step used to claim the
+          # runner had a Homebrew bash 5 and prepend paths that contain no such
+          # thing, so CI silently tested 3.2 while asserting it did not — which
+          # is how bash-4-only syntax reached this repository and passed review
+          # on a developer machine with a Homebrew bash.
+          #
+          # secretsd targets bash 3.2. Print what we actually have and move on.
           bash --version | head -1
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            echo "/opt/homebrew/bin:/usr/local/bin" >> "$GITHUB_PATH"
-          fi
+          echo "bash on PATH: $(command -v bash)"
 
       - name: Syntax gate
         shell: bash

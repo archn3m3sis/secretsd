@@ -1034,6 +1034,52 @@ if want cache; then
                                     || no "sec_stat_batch returned [$r]"
 fi
 
+
+# ==============================================================================
+# bash 3.2 — the bash macOS actually ships
+#
+# macOS has shipped bash 3.2.57 since 2007 and will not ship a newer one. A
+# Homebrew bash 5 on the developer's PATH hides every 4.x-only feature until it
+# reaches a machine that does not have one — which is exactly how associative
+# arrays landed here, passed locally, and broke on the macOS CI runner.
+# ==============================================================================
+if want bash32; then
+  group "bash 3.2 compatibility"
+
+  # no associative arrays anywhere: 3.2 has none at all
+  hits="$(grep -rn 'local -A\|declare -A' "$ROOT/bin" 2>/dev/null \
+          | grep -vE '^[^:]+:[0-9]+: *#' | grep -c . || true)"
+  [ "${hits:-0}" = "0" ] && ok "no associative arrays (bash 3.2 has none)" \
+                         || no "$hits associative array declaration(s) present"
+
+  # nor the other 4.x-only builtins that look harmless
+  for pat in 'mapfile ' 'readarray ' '\${[a-zA-Z_]*,,}' '\${[a-zA-Z_]*\^\^}' 'declare -n' 'local -n'; do
+    hits="$(grep -rnE "$pat" "$ROOT/bin" 2>/dev/null | grep -vE '^[^:]+:[0-9]+: *#' | grep -c . || true)"
+    [ "${hits:-0}" = "0" ] || no "bash 4-only construct in bin/: $pat ($hits)"
+  done
+  ok "no bash 4-only builtins (mapfile, readarray, \${x,,}, namerefs)"
+
+  # and everything must PARSE under the real 3.2 when one is present
+  if [ -x /bin/bash ] && /bin/bash -c '[ "${BASH_VERSINFO[0]}" -lt 4 ]' 2>/dev/null; then
+    bad=""
+    for f in "$ROOT"/bin/secretsd "$ROOT"/bin/lib/*.sh; do
+      /bin/bash -n "$f" 2>/dev/null || bad="$bad $(basename "$f")"
+    done
+    [ -z "$bad" ] && ok "every file parses under the system bash $(/bin/bash -c 'echo ${BASH_VERSION%%(*}')" \
+                  || no "does not parse under bash 3.2:$bad"
+
+    # a real run: the posture scan must produce the SAME findings under 3.2
+    a="$(sd posture --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["total"])' 2>/dev/null)"
+    b="$(SECRETSD_HOME="$DATA" SOPS_AGE_KEY_FILE="$AGE_KEY" /bin/bash "$BIN" posture --json 2>/dev/null \
+         | python3 -c 'import json,sys; print(json.load(sys.stdin)["total"])' 2>/dev/null)"
+    [ -n "$a" ] && [ "$a" = "$b" ] \
+      && ok "posture reports the same under bash 3.2 as under bash 5 ($a findings)" \
+      || no "posture differs by bash version" "bash5=$a bash3.2=$b"
+  else
+    skip "bash 3.2 parse gate" "no bash 3.x on this host"
+  fi
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"

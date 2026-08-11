@@ -25,51 +25,36 @@ posture_emit() { printf '%s|%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" "${6:-}";
 posture_scan() {
   local f m n p
 
-  # --- SSH keys: enumerate ONCE, stat ONCE, parse the config ONCE ------------
+  # --- SSH keys: ONE joined record per key ------------------------------------
   #
-  # Checks 1, 2 and 4 all walk the same key list. This used to call
-  # keys_private_paths three times, sec_mode/sec_mode_bad twice per key, and
-  # keys_hosts_using once per key from two different checks — each of those an
-  # awk parse of the entire ~/.ssh/config. Measured at ~260ms of the scan.
-  local -a KEYS=()
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    KEYS+=("$f")
-  done <<SCANK
-$(keys_private_paths)
-SCANK
-
-  local -A KHOSTS=() KMODE=() KSTAMP=()
-  local kb kh sp sm so smt sz
-  while IFS="$(printf '\t')" read -r kb kh; do
-    [ -n "$kb" ] || continue
-    KHOSTS["$kb"]="$kh"
-  done <<KMAP
-$(keys_hosts_map)
-KMAP
-
-  if [ "${#KEYS[@]}" -gt 0 ]; then
-    while IFS="$(printf '\t')" read -r sp sm so smt sz; do
-      [ -n "$sp" ] || continue
-      KMODE["$sp"]="$sm"; KSTAMP["$sp"]="$smt-$sz"
-    done <<KSTAT
-$(sec_stat_batch "${KEYS[@]}")
-KSTAT
+  # Checks 1, 2 and 4 all walk the same key list. Rather than three enumerations,
+  # a stat per key per check, and an ~/.ssh/config parse per key, a single awk
+  # joins four inputs — the key list, one batched stat, the host map, and the
+  # passphrase cache — and emits everything each key needs on one line.
+  #
+  # Deliberately no associative arrays: macOS ships bash 3.2, which has none,
+  # and an earlier version of this that used them passed on a Homebrew bash 5
+  # and broke on the system bash.
+  keys_private_paths > "$TMPD/p.keys" 2>/dev/null || : > "$TMPD/p.keys"
+  : > "$TMPD/p.stat"
+  if [ -s "$TMPD/p.keys" ]; then
+    # shellcheck disable=SC2046
+    sec_stat_batch $(cat "$TMPD/p.keys") > "$TMPD/p.stat" 2>/dev/null
   fi
+  keys_hosts_map > "$TMPD/p.hosts" 2>/dev/null || : > "$TMPD/p.hosts"
+  cp "$(keys_pass_cachefile)" "$TMPD/p.pass" 2>/dev/null || : > "$TMPD/p.pass"
 
-  local uses base mode
-  for f in ${KEYS[@]+"${KEYS[@]}"}; do
-    base="${f##*/}"
-    uses="${KHOSTS[$base]:-}"
-    mode="${KMODE[$f]:-}"
+  local f base uses mode stamp cached
+  while IFS='|' read -r f base mode stamp uses cached; do
+    [ -n "$f" ] || continue
 
     # 1. no passphrase — a bearer credential on disk
-    if ! keys_has_passphrase "$f" "${KSTAMP[$f]:-}"; then
+    if ! keys_has_passphrase "$f" "$stamp" "$cached"; then
       posture_emit crit ssh-nopass guided "SSH key has no passphrase" \
         "$base authenticates to ${uses:-nothing configured} with no secret to unlock it" "$f"
     fi
 
-    # 2. readable by anyone else on the host
+    # 2. readable by anyone else on this host
     case "$mode" in
       ''|600|400|000) ;;
       *[1-7][0-7]|*[0-7][1-7])
@@ -77,12 +62,25 @@ KSTAT
           "$base is mode $mode; anyone on this host can take it" "$f" ;;
     esac
 
-    # 4. kept and trusted somewhere, but referenced by nothing
+    # 4. kept and trusted somewhere, referenced by nothing
     if [ -z "$uses" ]; then
       posture_emit low ssh-orphan info "SSH key is referenced by nothing" \
         "$base is not used by any Host block, but may still be authorised somewhere" "$f"
     fi
-  done
+  done <<KEYJOIN
+$(awk -F'\t' '
+  FILENAME == ARGV[1] { stat_mode[$1] = $2; stat_stamp[$1] = $4 "-" $5; next }
+  FILENAME == ARGV[2] { hosts[$1] = $2; next }
+  FILENAME == ARGV[3] { if ($2 != "") pass[$1 "\t" $2] = $3; next }
+  {
+    p = $0
+    if (p == "") next
+    n = split(p, seg, "/"); base = seg[n]
+    st = stat_stamp[p]
+    printf "%s|%s|%s|%s|%s|%s\n", p, base, stat_mode[p], st, hosts[base], pass[p "\t" st]
+  }
+' "$TMPD/p.stat" "$TMPD/p.hosts" "$TMPD/p.pass" "$TMPD/p.keys")
+KEYJOIN
 
   # 3. IdentityFile entries pointing at keys that do not exist
   while IFS= read -r f; do
