@@ -1080,6 +1080,94 @@ if want bash32; then
   fi
 fi
 
+
+# ==============================================================================
+# note backends — all six, and the mark that follows the selection
+# ==============================================================================
+if want notes; then
+  group "note backends"
+
+  # every system must be wired; none may still be listed as "soon"
+  soon="$(bash -c '
+    SEC_ROOT="'"$DATA"'"; SEC_BIN="'"$ROOT"'/bin"; TMPD=$(mktemp -d)
+    . "$SEC_BIN/lib/ui.sh"; . "$SEC_BIN/lib/pkmart.sh"; . "$SEC_BIN/lib/pkm.sh"
+    pkm_systems | awk -F"|" "\$4 != \"active\" {print \$1}" | tr "\n" " "')"
+  [ -z "$soon" ] && ok "every note system is wired and marked active" \
+                 || no "still unwired:$soon"
+
+  # each system needs its OWN mark — the screen used to show Obsidian's crystal
+  # whatever you had highlighted
+  r="$(bash -c '
+    SEC_ROOT="'"$DATA"'"; SEC_BIN="'"$ROOT"'/bin"; TMPD=$(mktemp -d)
+    . "$SEC_BIN/lib/ui.sh"; . "$SEC_BIN/lib/tui.sh"; . "$SEC_BIN/lib/pkmart.sh"; . "$SEC_BIN/lib/pkm.sh"
+    for s in obsidian plaintext apple-notes joplin cherrytree notion; do
+      pkm_draw_mark "$s" 1 1 2>/dev/null | tr -d "\033[;0-9H" | cksum | cut -d" " -f1
+    done | sort -u | wc -l | tr -d " "')"
+  [ "$r" = "6" ] && ok "all six marks are distinct ($r unique)" \
+                 || no "only $r distinct mark(s) — some systems share a logo"
+
+  # and every id the table lists must have a mark the painter can draw
+  bad="$(bash -c '
+    SEC_ROOT="'"$DATA"'"; SEC_BIN="'"$ROOT"'/bin"; TMPD=$(mktemp -d)
+    . "$SEC_BIN/lib/ui.sh"; . "$SEC_BIN/lib/tui.sh"; . "$SEC_BIN/lib/pkmart.sh"; . "$SEC_BIN/lib/pkm.sh"
+    for s in $(pkm_systems | cut -d"|" -f1); do
+      out="$(pkm_draw_mark "$s" 1 1 2>/dev/null | tr -d "\033[;0-9H \n")"
+      [ -n "$out" ] || printf "%s " "$s"
+    done')"
+  [ -z "$bad" ] && ok "every listed system has a mark the painter can draw" \
+                || no "systems with no mark:$bad"
+
+  # --- CherryTree ------------------------------------------------------------
+  CT="$DATA/ct"; mkdir -p "$CT"
+  printf '## Inventory\n\n- ALPHA — the deploy job\n' > "$DATA/ctdoc.md"
+  r="$(bash -c '
+    set -uo pipefail
+    SEC_ROOT="'"$DATA"'"; SEC_BIN="'"$ROOT"'/bin"; SEC_SELF="$SEC_BIN/secretsd"; TMPD=$(mktemp -d)
+    for l in ui tui store security pkm notes; do . "$SEC_BIN/lib/$l.sh" 2>/dev/null; done
+    SEC_SECRETS="'"$DATA"'/secrets"
+    pkm_set system cherrytree >/dev/null 2>&1; pkm_set vault "'"$CT"'" >/dev/null 2>&1
+    notes_write "Inventory" t "'"$DATA"'/ctdoc.md" >/dev/null
+    notes_write "Access"    t "'"$DATA"'/ctdoc.md" >/dev/null
+    notes_write "Inventory" t "'"$DATA"'/ctdoc.md" >/dev/null' 2>/dev/null; echo done)"
+  F="$CT/secretsd.ctd"
+  if [ -f "$F" ]; then
+    n="$(python3 -c "
+import xml.etree.ElementTree as ET,sys
+r=ET.parse('$F').getroot()
+print(r.tag, len(r.findall('node')))" 2>/dev/null)"
+    [ "$n" = "cherrytree 2" ] \
+      && ok "CherryTree writes valid .ctd XML and replaces a node instead of duplicating" \
+      || no "CherryTree document is wrong" "got [$n], expected [cherrytree 2]"
+    # it must NEVER write a .ctb — that is a live SQLite database
+    [ -z "$(find "$CT" -name '*.ctb' 2>/dev/null)" ] \
+      && ok "CherryTree backend never touches a .ctb SQLite document" \
+      || no "a .ctb was written — that risks corrupting an open notebook"
+  else
+    no "CherryTree wrote no document"
+  fi
+
+  # --- Notion ----------------------------------------------------------------
+  # it must refuse to publish until BOTH the page id and the vault token exist
+  r="$(bash -c '
+    SEC_ROOT="'"$DATA"'"; SEC_BIN="'"$ROOT"'/bin"; SEC_SELF="$SEC_BIN/secretsd"; TMPD=$(mktemp -d)
+    for l in ui tui store security pkm notes; do . "$SEC_BIN/lib/$l.sh" 2>/dev/null; done
+    SEC_SECRETS="'"$DATA"'/secrets"
+    pkm_set system notion >/dev/null 2>&1
+    notes_backend_ready && echo ready || echo "not-ready"' 2>/dev/null)"
+  [ "$r" = "not-ready" ] && ok "Notion reports not-ready until a page id and token exist" \
+                         || no "Notion claimed ready with nothing configured"
+
+  # the token must live in the VAULT, not in the plaintext pkm config
+  grep -q 'notes_notion_keyname' "$ROOT/bin/lib/notes.sh" \
+    && ok "the Notion token is read from the vault, not the config file" \
+    || no "the Notion token is not vault-backed"
+  if grep -q 'pkm_set notion_token' "$ROOT/bin/lib/pkm.sh"; then
+    no "the Notion token is written into the plaintext pkm config"
+  else
+    ok "no Notion token is written to the plaintext config"
+  fi
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"

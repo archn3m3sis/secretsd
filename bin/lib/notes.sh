@@ -22,9 +22,13 @@
 #   plaintext    a directory of markdown — Notepad, or any editor
 #   apple-notes  via osascript, into a named folder
 #   joplin       via the local clipper REST API on 127.0.0.1:41184
-#   cherrytree   not wired: its .ctb is a SQLite document with its own schema,
-#                and writing into an open document risks corrupting it
-#   notion       not wired: hosted, needs egress and a token
+#   cherrytree   writes a CherryTree XML document (.ctd) that CherryTree opens
+#                and imports directly. It does NOT write into a .ctb, which is a
+#                live SQLite database: writing into a document the application
+#                has open is how you corrupt somebody's whole notebook.
+#   notion       via the official REST API. Hosted, so it needs egress and a
+#                token — and it is the ONE backend that sends anything off this
+#                machine, which is stated plainly on the screen before you pair.
 #
 # Sourced, never executed.
 
@@ -39,6 +43,8 @@ notes_backend_ready() {
     plaintext)   [ -n "$(notes_vault)" ] ;;
     apple-notes) command -v osascript >/dev/null 2>&1 ;;
     joplin)      curl -sS --max-time 2 "http://127.0.0.1:41184/ping" 2>/dev/null | ui_match_sub JoplinClipperServer ;;
+    cherrytree)  [ -n "$(notes_vault)" ] ;;
+    notion)      [ -n "$(pkm_get notion_parent)" ] && sec_has "$(notes_notion_keyname)" ;;
     *)           return 1 ;;
   esac
 }
@@ -49,6 +55,8 @@ notes_target_desc() {
     plaintext)   printf '%s/%s' "$(notes_vault)" "$NOTES_SUBDIR" ;;
     apple-notes) printf 'Apple Notes → folder "%s"' "$NOTES_SUBDIR" ;;
     joplin)      printf 'Joplin → notebook "%s"' "$NOTES_SUBDIR" ;;
+    cherrytree)  printf '%s/%s.ctd  (open or import in CherryTree)' "$(notes_vault)" "$NOTES_SUBDIR" ;;
+    notion)      printf 'Notion → page %s  (leaves this machine)' "$(pkm_get notion_parent)" ;;
     *)           printf 'nothing paired' ;;
   esac
 }
@@ -168,9 +176,136 @@ print(json.dumps({"title": sys.argv[1], "body": open(sys.argv[2]).read()}))' "$t
         || { ui_err "Joplin API refused the note"; return 1; }
       printf 'Joplin → %s' "$title" ;;
 
+    cherrytree)
+      # A .ctd is CherryTree's XML document format. Writing one is safe at any
+      # time; writing into a .ctb — a live SQLite database the application may
+      # have open — is not, and no amount of care makes it safe, so this does
+      # not offer to.
+      #
+      # Each publish REPLACES the node of the same name rather than appending,
+      # so re-publishing the inventory does not leave you with nine copies of it
+      # to tell apart.
+      dir="$(notes_vault)"
+      mkdir -p "$dir" || { ui_err "cannot write to $dir"; return 1; }
+      out="$dir/$NOTES_SUBDIR.ctd"
+      python3 - "$out" "$title" "$body" "$(hostname -s 2>/dev/null)" <<'PY_CT' || {
+import html, os, re, sys, xml.etree.ElementTree as ET
+
+path, title, bodyfile, host = sys.argv[1:5]
+text = open(bodyfile, encoding="utf-8", errors="replace").read()
+
+if os.path.exists(path):
+    try:
+        tree = ET.parse(path); root = tree.getroot()
+    except Exception:
+        root = ET.Element("cherrytree")
+else:
+    root = ET.Element("cherrytree")
+
+# replace any node with this title — publishing twice must not duplicate
+for existing in list(root.findall("node")):
+    if existing.get("name") == title:
+        root.remove(existing)
+
+used = {int(n.get("unique_id", 0)) for n in root.iter("node") if (n.get("unique_id") or "").isdigit()}
+uid = 1
+while uid in used:
+    uid += 1
+
+node = ET.SubElement(root, "node", {
+    "name": title,
+    "unique_id": str(uid),
+    "prog_lang": "custom-colors",
+    "tags": "secretsd",
+    "readonly": "0",
+    "nosearch_me": "0",
+    "nosearch_ch": "0",
+    "custom_icon_id": "0",
+    "is_bold": "0",
+    "foreground": "",
+    "ts_creation": "0",
+    "ts_lastsave": "0",
+})
+rt = ET.SubElement(node, "rich_text")
+rt.text = text + "\n\nWritten by secretsd on %s. Names and relationships only — no secret values.\n" % host
+
+ET.ElementTree(root).write(path, encoding="UTF-8", xml_declaration=True)
+PY_CT
+        ui_err "could not write the CherryTree document"; return 1; }
+      chmod 600 "$out"
+      printf '%s' "$out" ;;
+
+    notion)
+      # The ONLY backend that sends anything off this machine. The token is
+      # injected into one curl and never printed, never exported, never written
+      # to the run log — the same contract as every other value in this program.
+      local parent keyname
+      parent="$(pkm_get notion_parent)"
+      keyname="$(notes_notion_keyname)"
+      [ -n "$parent" ] || { ui_err "no Notion parent page recorded — run: secretsd pkm"; return 1; }
+      sec_has "$keyname" || { ui_err "no $keyname in the vault"; return 1; }
+
+      python3 - "$body" "$title" "$parent" > "$TMPD/notion.json" <<'PY_NO'
+import json, sys
+title, parent = sys.argv[2], sys.argv[3]
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+
+def rt(s):
+    return [{"type": "text", "text": {"content": s[:1900]}}]
+
+blocks = []
+for line in text.split("\n"):
+    if not line.strip():
+        continue
+    if line.startswith("### "):
+        blocks.append({"object": "block", "type": "heading_3",
+                       "heading_3": {"rich_text": rt(line[4:])}})
+    elif line.startswith("## "):
+        blocks.append({"object": "block", "type": "heading_2",
+                       "heading_2": {"rich_text": rt(line[3:])}})
+    elif line.startswith("- ") or line.startswith("* "):
+        blocks.append({"object": "block", "type": "bulleted_list_item",
+                       "bulleted_list_item": {"rich_text": rt(line[2:])}})
+    else:
+        blocks.append({"object": "block", "type": "paragraph",
+                       "paragraph": {"rich_text": rt(line)}})
+    if len(blocks) >= 95:            # Notion caps children per request at 100
+        break
+
+print(json.dumps({
+    "parent": {"page_id": parent},
+    "properties": {"title": {"title": rt(title)}},
+    "children": blocks,
+}))
+PY_NO
+
+      local rc
+      SEC_NOTION_PAYLOAD="$TMPD/notion.json" \
+      "$SEC_SELF" run --only "$keyname" -- sh -c '
+        code=$(curl -sS --max-time 15 -o "$SEC_NOTION_PAYLOAD.out" -w "%{http_code}" \
+          -X POST https://api.notion.com/v1/pages \
+          -H "Authorization: Bearer ${'"$keyname"'}" \
+          -H "Notion-Version: 2022-06-28" \
+          -H "Content-Type: application/json" \
+          --data @"$SEC_NOTION_PAYLOAD")
+        [ "$code" = "200" ] || { echo "$code" > "$SEC_NOTION_PAYLOAD.code"; exit 1; }
+      ' >/dev/null 2>&1
+      rc=$?
+      if [ "$rc" -ne 0 ]; then
+        ui_err "Notion refused the page$( [ -f "$TMPD/notion.json.code" ] && printf ' (HTTP %s)' "$(cat "$TMPD/notion.json.code")" )"
+        [ -f "$TMPD/notion.json.out" ] && \
+          ui_note "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("message","")[:160])' "$TMPD/notion.json.out" 2>/dev/null)"
+        return 1
+      fi
+      printf 'Notion → %s' "$title" ;;
+
     *) ui_err "no note backend is paired — run: secretsd pkm"; return 1 ;;
   esac
 }
+
+# The Notion integration token, by name. Kept in the vault like everything else,
+# so it is injected into one curl and never appears in a process listing.
+notes_notion_keyname() { printf '%s' "${SECRETSD_NOTION_KEY:-NOTION_TOKEN}"; }
 
 # --- the documents it can publish ---------------------------------------------
 
@@ -272,8 +407,14 @@ notes_screen() {
       apple-notes)        ui_err "osascript unavailable — is this macOS?" ;;
       joplin)             ui_err "Joplin clipper API not answering on 127.0.0.1:41184"
                           ui_note "enable it: Joplin → Tools → Options → Web Clipper" ;;
-      *)                  ui_err "$sys has no write backend yet"
-                          ui_note "wired today: Obsidian, plain markdown, Apple Notes, Joplin" ;;
+      cherrytree)         ui_err "no folder set for the CherryTree document"
+                          ui_note "run: secretsd pkm — and choose where the .ctd should live" ;;
+      notion)             ui_err "Notion is not fully set up"
+                          ui_note "needs a parent page id and $(notes_notion_keyname) in the vault"
+                          ui_note "run: secretsd pkm" ;;
+      *)                  ui_err "no note system is paired"
+                          ui_note "all six are wired: Obsidian, plain markdown, Apple Notes,"
+                          ui_note "Joplin, CherryTree and Notion — run: secretsd pkm" ;;
     esac
     ui_pause; return 0
   fi

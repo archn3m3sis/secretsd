@@ -170,6 +170,37 @@ It will not rotate, renew, or delete anything. It tells you, and it keeps tellin
 
 ---
 
+## Note systems
+
+All six are wired. Pick yours with `secretsd pkm`; the pixel mark on the right
+changes as you move down the list, because it tells you which system you are
+about to pair with rather than decorating the screen.
+
+| | |
+|---|---|
+| **Obsidian** | markdown with YAML frontmatter, into a `secretsd/` folder in your vault |
+| **Plain markdown** | the same files with a plain header — Notepad, or any editor |
+| **Apple Notes** | via `osascript`, into a named folder |
+| **Joplin** | the local clipper API on `127.0.0.1:41184` |
+| **CherryTree** | writes a `.ctd` XML document you open directly |
+| **Notion** | the official REST API |
+
+Two of those deserve their caveats stated plainly.
+
+**CherryTree** gets a `.ctd`, never a `.ctb`. A `.ctb` is a live SQLite database,
+and writing into one the application has open is how a whole notebook is lost.
+Re-publishing the same document replaces its node rather than appending, so you
+don't end up with nine copies of the inventory to tell apart.
+
+**Notion is the only backend that sends anything off your machine.** The screen
+says so before you pair. The note still carries no secret values — but names,
+purposes and relationships are themselves a map of your access, and that map
+would be leaving. The integration token lives in the vault like every other
+credential, so it is injected into one request and never printed, never
+exported, never written to the run log.
+
+---
+
 ## Why a note vault is part of this
 
 Every strong development and security team I have worked with had the same thing in common, and

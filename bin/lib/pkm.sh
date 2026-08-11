@@ -64,17 +64,64 @@ else
   PKM_V_MID=$'\033[38;5;99m'; PKM_V_DEEP=$'\033[38;5;93m'; PKM_V_DARK=$'\033[38;5;57m'
 fi
 
-# pkm_draw_obsidian LINE COL — paint the crystal, one colour run per facet
-pkm_draw_obsidian() {
-  local line="$1" col="$2" r i ch reg prev out
+# --- per-system palettes ------------------------------------------------------
+# Region digits 1-4 carry the SHAPE; each system maps them to its own colours.
+# That is what lets one painter draw six different marks.
+pkm_palette() {   # $1 system  $2 region -> a colour escape
+  case "$1" in
+    obsidian)
+      case "$2" in 4) printf '%s' "$N_VIOLET" ;; 3) printf '%s' "$PKM_V_MID" ;;
+                   2) printf '%s' "$PKM_V_DEEP" ;; 1) printf '%s' "$PKM_V_DARK" ;;
+                   *) printf '%s' "$T_LEAD" ;; esac ;;
+    plaintext)
+      case "$2" in 4) printf '%s' "$T_TEXT" ;; 3) printf '%s' "$T_MUTE" ;;
+                   2) printf '%s' "$T_DIM" ;; 1) printf '%s' "$T_LEAD" ;;
+                   *) printf '%s' "$T_LEAD" ;; esac ;;
+    apple-notes)
+      case "$2" in 4) printf '%s' "$N_AMBER" ;; 3) printf '%s' "$N_ORANGE" ;;
+                   2) printf '%s' "$T_MUTE" ;; 1) printf '%s' "$T_DIM" ;;
+                   *) printf '%s' "$T_LEAD" ;; esac ;;
+    joplin)
+      case "$2" in 4) printf '%s' "$N_BLUE" ;; 3) printf '%s' "$N_CYAN" ;;
+                   2) printf '%s' "$N_TEAL" ;; 1) printf '%s' "$T_DIM" ;;
+                   *) printf '%s' "$T_LEAD" ;; esac ;;
+    cherrytree)
+      case "$2" in 4) printf '%s' "$N_GREEN" ;; 3) printf '%s' "$N_GREEN" ;;
+                   2) printf '%s' "$N_RED" ;; 1) printf '%s' "$N_RED" ;;
+                   *) printf '%s' "$T_LEAD" ;; esac ;;
+    notion)
+      case "$2" in 4) printf '%s' "$T_TEXT" ;; 3) printf '%s' "$T_MUTE" ;;
+                   2) printf '%s' "$T_TEXT" ;; 1) printf '%s' "$T_DIM" ;;
+                   *) printf '%s' "$T_LEAD" ;; esac ;;
+    *) printf '%s' "$T_LEAD" ;;
+  esac
+}
+
+# pkm_draw_mark SYSTEM LINE COL — paint the mark of whichever system is
+# highlighted. The screen used to paint the Obsidian crystal unconditionally, so
+# moving the selection to Joplin or Notion still showed Obsidian's logo — the
+# one part of this screen that was decorative rather than informative.
+pkm_draw_mark() {
+  local sys="$1" line="$2" col="$3" r i ch reg prev out c
+  local -a A=() R=()
+  case "$sys" in
+    obsidian)    A=("${OBS_ART[@]}");            R=("${OBS_REG[@]}") ;;
+    plaintext)   A=("${PKM_ART_PLAINTEXT[@]}");  R=("${PKM_REG_PLAINTEXT[@]}") ;;
+    apple-notes) A=("${PKM_ART_APPLE_NOTES[@]}");R=("${PKM_REG_APPLE_NOTES[@]}") ;;
+    joplin)      A=("${PKM_ART_JOPLIN[@]}");     R=("${PKM_REG_JOPLIN[@]}") ;;
+    cherrytree)  A=("${PKM_ART_CHERRYTREE[@]}"); R=("${PKM_REG_CHERRYTREE[@]}") ;;
+    notion)      A=("${PKM_ART_NOTION[@]}");     R=("${PKM_REG_NOTION[@]}") ;;
+    *)           A=("${OBS_ART[@]}");            R=("${OBS_REG[@]}") ;;
+  esac
+
   r=0
-  while [ "$r" -lt ${#OBS_ART[@]} ]; do
+  while [ "$r" -lt "${#A[@]}" ]; do
     out=""; prev=""
     i=0
     while [ "$i" -lt 22 ]; do
-      ch="${OBS_ART[$r]:$i:1}"
-      reg="${OBS_REG[$r]:$i:1}"
-      local c; c="$(pkm_facet_colour "$reg")"
+      ch="${A[$r]:$i:1}"; [ -n "$ch" ] || ch=" "
+      reg="${R[$r]:$i:1}"
+      c="$(pkm_palette "$sys" "$reg")"
       [ "$c" != "$prev" ] && { out="$out$c"; prev="$c"; }
       out="$out$ch"
       i=$(( i + 1 ))
@@ -84,6 +131,9 @@ pkm_draw_obsidian() {
   done
 }
 
+# kept as the old name so nothing else breaks
+pkm_draw_obsidian() { pkm_draw_mark obsidian "$1" "$2"; }
+
 # --- the systems --------------------------------------------------------------
 # id|mark|label|state|detect-hint
 pkm_systems() {
@@ -92,8 +142,8 @@ obsidian|⢴⣿⡦|Obsidian|active|markdown vault with frontmatter and tags
 plaintext|⣗⣓⣳|Plain markdown|active|a folder of .md — Notepad, or any editor
 apple-notes|⣏⣿⣯|Apple Notes|active|via osascript, into a named folder
 joplin|⢭⣹⠏|Joplin|active|local clipper API on 127.0.0.1:41184
-cherrytree|⠴⣿⠦|CherryTree|soon|its .ctb is a live SQLite doc — unsafe to write into
-notion|⣿⠢⣿|Notion|soon|hosted, needs egress and a token
+cherrytree|⠴⣿⠦|CherryTree|active|writes a .ctd document — never into a live .ctb
+notion|⣿⠢⣿|Notion|active|hosted: this one sends the note off your machine
 SYS
 }
 
@@ -190,7 +240,7 @@ EOF
     # sequential blank-line padding that follows overwrites it — and worse, the
     # cursor left mid-screen by the absolute writes made the padding wipe the
     # bottom half of the system list.
-    pkm_draw_obsidian "$logoline" "$logocol"
+    pkm_draw_mark "${P_ID[$sel]}" "$logoline" "$logocol"
   }
 
   tui_begin
@@ -223,6 +273,44 @@ EOF
               ui_note "Joplin → Tools → Options → Web Clipper → copy the authorisation token"
               local t; t="$(ui_ask 'Joplin API token' '')"
               [ -n "$t" ] && pkm_set joplin_token "$t" ;;
+            cherrytree)
+              tui_end
+              ui_note "secretsd writes a CherryTree XML document (.ctd) you can open directly."
+              ui_note "It will NOT write into a .ctb — that is a live SQLite database, and"
+              ui_note "writing into one CherryTree has open is how a whole notebook is lost."
+              local d; d="$(ui_ask 'Folder for the .ctd document' "$HOME/notes")"
+              [ -n "$d" ] || d="$HOME/notes"
+              case "$d" in "~"*) d="$HOME${d#\~}" ;; esac
+              mkdir -p "$d" && pkm_set vault "$d" ;;
+            notion)
+              tui_end
+              ui_warn "Notion is hosted. This is the ONE backend that sends a note off"
+              ui_warn "this machine — over the network, to a company that keeps it."
+              ui_note "The note still carries no secret VALUES; it carries names,"
+              ui_note "purposes and relationships, which is itself a map of your access."
+              printf '\n'
+              ui_note "Set up an integration at notion.so/my-integrations, share the target"
+              ui_note "page with it, then paste the page id from its URL (the 32 hex chars)."
+              printf '\n'
+              local np nk
+              np="$(ui_ask 'Notion parent page id' '')"
+              [ -n "$np" ] || { ui_err "no page id — not paired"; ui_pause; tui_begin; tui_dims; draw_pkm; continue; }
+              pkm_set notion_parent "$np"
+              nk="$(notes_notion_keyname)"
+              if sec_has "$nk"; then
+                ui_ok "using the existing $nk from your vault"
+              else
+                ui_note "The integration token goes in the VAULT, not in this config file,"
+                ui_note "so it is injected into one request and never printed."
+                local tok
+                tok="$(ui_ask_secret "Notion integration token (stored as $nk)")" || tok=""
+                if [ -n "$tok" ]; then
+                  sec_put "$nk" "$tok" && ui_ok "stored $nk" || ui_err "could not store $nk"
+                  tok=""
+                else
+                  ui_warn "no token stored — publishing will refuse until you add $nk"
+                fi
+              fi ;;
           esac
           pkm_set paired "$(date +%F)"
           tui_end
@@ -235,7 +323,7 @@ EOF
           tui_end
           ui_warn "${P_LABEL[$sel]} is listed but not wired up yet"
           ui_note "${P_NOTE[$sel]}"
-          ui_note "Obsidian is the one that works today — pick it, or press s to skip."
+          ui_note "Everything marked active above is wired and works today."
           ui_pause; tui_begin; tui_dims; draw_pkm; continue
         fi ;;
       char:s) pkm_set system none; tui_end; return 0 ;;
@@ -244,6 +332,11 @@ EOF
     esac
     draw_pkm_row "$prev" 0
     draw_pkm_row "$sel" 1
+    # ...and repaint the mark, because it belongs to the SELECTION. Moving down
+    # the list used to leave Obsidian's crystal sitting there whatever you had
+    # highlighted, which made the one graphic on the screen decorative instead
+    # of informative.
+    pkm_draw_mark "${P_ID[$sel]}" "$logoline" "$logocol"
   done
   tui_end
   trap 'cleanup' EXIT INT TERM
