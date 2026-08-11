@@ -323,7 +323,7 @@ EOF
 
   local sel=0 key prev i curline host sub claudever
   host="$(hostname -s 2>/dev/null || echo host)"
-  if ws_have_claude; then claudever="Claude Code $(claude --version 2>/dev/null | awk '{print $1}')"
+  if ws_have_claude; then claudever="Claude Code $(ui_tool_version claude claude --version | awk '{print $1}')"
   else claudever="Claude Code not on PATH"; fi
   sub="$n project(s) · $claudever · agents launch without secret material by default"
 
@@ -382,6 +382,7 @@ EOF
     tui_clear_below
   }
 
+  ui_prof pre_paint
   tui_begin
   trap 'tui_end; cleanup' EXIT INT TERM
   tui_dims; draw_ws
@@ -576,29 +577,41 @@ SESSIDS
 # =============================================================================
 home_screen() {
   if ! ui_interactive; then sec_help; return 0; fi
+  ui_prof home_entry
 
-  local -a H_ID H_MARK H_HUE H_LABEL H_VALUE H_DOT H_DLAB H_DESC H_LINE
+  local -a H_ID H_MARK H_HUE H_LABEL H_VALUE H_DOT H_DLAB H_DESC H_LINE H_TOP H_BOT
   local n=0
 
   _row() {  # id mark hue label value dot dlab desc
     H_ID[$n]="$1"; H_MARK[$n]="$2"; H_HUE[$n]="$3"; H_LABEL[$n]="$4"
     H_VALUE[$n]="$5"; H_DOT[$n]="$6"; H_DLAB[$n]="$7"; H_DESC[$n]="$8"
+    # Resolve the two-row pictogram ONCE. draw_home_row used to call
+    # tui_icon_top and tui_icon_bot inside command substitutions on every row of
+    # every repaint — 30 subshells per paint, for glyphs that never change.
+    H_TOP[$n]="$(tui_icon_top "$1")"; H_BOT[$n]="$(tui_icon_bot "$1")"
     n=$(( n + 1 ))
   }
 
   # --- gather, once ---------------------------------------------------------
   local nvault ncred ndoc nproj nunread nsess pkmsys pkmvault claudev pending
   nvault="$(vault_paths | sec_nlines)"
+  ui_prof vault_paths
   ncred="$(sec_count 2>/dev/null)"; ncred="${ncred:-0}"
+  ui_prof sec_count
   sec_manifest_keys > "$TMPD/hmk" 2>/dev/null; sec_names > "$TMPD/hsk" 2>/dev/null
   ndoc="$(comm -12 "$TMPD/hsk" "$TMPD/hmk" 2>/dev/null | sec_nlines)"
   nproj="$(ws_discover 2>/dev/null | sort -u | sec_nlines)"
+  ui_prof ws_discover
   nunread="$(prov_unseen_count)"
+  ui_prof prov_unseen_count
   nsess="$(ws_session_ids | sec_nlines)"
+  ui_prof ws_session_ids
+  ui_prof pre_pkm
   pkmsys="$(pkm_get system)"; [ -n "$pkmsys" ] || pkmsys="not paired"
   pkmvault="$(pkm_get vault)"
   case "$pkmvault" in "$HOME"/*) pkmvault="~${pkmvault#$HOME}" ;; esac
-  if ws_have_claude; then claudev="Claude Code $(claude --version 2>/dev/null | awk '{print $1}')"
+  ui_prof pkm
+  if ws_have_claude; then claudev="Claude Code $(ui_tool_version claude claude --version | awk '{print $1}')"
   else claudev="claude CLI not on PATH"; fi
   pending=0
   [ -f "$SEC_ROTATE" ] && pending="$(grep '^- \[ \]' "$SEC_ROTATE" 2>/dev/null | sec_nlines)"
@@ -619,17 +632,20 @@ home_screen() {
        "$([ "$pkmsys" = "not paired" ] && echo none || echo ok)" "${pkmvault:-no vault detected}" \
        "the note system this credential layer is paired with"
   local nfind ncrit pscan
+  ui_prof claude_version
   pscan="$(posture_scan_cached 2>/dev/null)"
   nfind="$(printf '%s\n' "$pscan" | grep -c '|' || true)"
   ncrit="$(printf '%s\n' "$pscan" | grep -c '^crit|' || true)"
+  ui_prof posture_cached
   local ykstate ykdesc
   # No ykman call here: `ykman list` costs about a second of Python start-up, and
   # a menu must not pay that on every paint. The module probes when you open it.
-  if yk_have; then ykstate=none; ykdesc="ykman $(ykman --version 2>/dev/null | awk '{print $NF}')"
+  if yk_have; then ykstate=none; ykdesc="ykman $(ui_tool_version ykman ykman --version | awk '{print $NF}')"
   else ykstate=err; ykdesc="ykman not installed"; fi
   _row yubikey   '⣰⣉⣉⣆' "$N_AMBER"   "YUBIKEY"   "$ykdesc" "$ykstate" \
        "$(yk_have && echo 'hardware-backed' || echo 'brew install ykman')" \
        "codes, PIV slots, and moving TOTP seeds off disk onto the key"
+  ui_prof yubikey
   local kithave guarded gtotal
   kithave="$(ls "$HOME"/Documents/secretsd-recovery-*.age 2>/dev/null | sec_nlines)"
   gtotal=0; guarded=0
@@ -648,6 +664,7 @@ HOMEG
        "$([ "${guarded:-0}" -ge "${gtotal:-1}" ] && echo ok || echo warn)" \
        "$([ "${guarded:-0}" -gt 0 ] && echo "hook installed" || echo "nothing is blocking a leak")" \
        "refuses the commit that contains a credential, instead of cleaning up after"
+  ui_prof guard_repos
   local monstate mondesc
   if mon_scheduled 2>/dev/null; then monstate=ok; mondesc="running on a schedule"
   else monstate=warn; mondesc="not scheduled"; fi
@@ -674,16 +691,20 @@ HOMEG
   elif [ "$asoon" -gt 0 ]; then adot=warn; aval="$asoon due soon"
   elif [ -n "$achecked" ]; then adot=ok;   aval="nothing due"
   else adot=none; aval="never scanned"; fi
+  ui_prof row_alerts_pre
   _row alerts    '⡎⠭⢱⠀' "$N_AMBER"   "EXPIRY"    "$aval" "$adot" \
        "$(alert_scheduled 2>/dev/null && echo "daily at $(alert_schedule_at)" || echo "not scheduled")" \
        "certs and recorded dates, checked on a schedule — $aunk have no date at all"
+  ui_prof row_keychain_pre
   _row keychain  '⣰⣉⣉⣆' "$N_BLUE"    "KEYCHAIN"  "$(kc_available 2>/dev/null && echo "macOS login keychain" || echo "not available here")" \
        "$(kc_available 2>/dev/null && echo none || echo err)" "import, never delete" \
        "pull the credentials already sitting in your login keychain into the vault"
+  ui_prof row_doctor_pre
   _row doctor    '⠺⣭⠗' "$N_ORANGE"  "DOCTOR"    "$ndoc of $ncred documented" \
        "$([ "${pending:-0}" -gt 0 ] && echo warn || echo ok)" \
        "$([ "${pending:-0}" -gt 0 ] && echo "$pending pending rotation" || echo "nothing pending")" \
        "decryption, recipients, coverage, expiry, plaintext hygiene"
+  ui_prof rows_built
   unset -f _row
 
   local sel=0 key prev i curline host gapn padrows extra block avail mode g
@@ -693,10 +714,10 @@ HOMEG
   draw_home_row() {
     local k="$1" on="$2"
     printf '\033[%d;1H' "${H_LINE[$k]}"
-    tui_modrow "$on" "$(tui_icon_top "${H_ID[$k]}")" "${H_HUE[$k]}" "${H_LABEL[$k]}" \
+    tui_modrow "$on" "${H_TOP[$k]}" "${H_HUE[$k]}" "${H_LABEL[$k]}" \
                "${H_VALUE[$k]}" "${H_DOT[$k]}" "${H_DLAB[$k]}"
     [ "$mode" != compact ] && tui_moddesc "$on" "$(tui_fit "${H_DESC[$k]}" $(( TUI_COLS - 14 )))" \
-               "$(tui_icon_bot "${H_ID[$k]}")" "${H_HUE[$k]}"
+               "${H_BOT[$k]}" "${H_HUE[$k]}"
   }
 
   hlayout() {
@@ -737,7 +758,9 @@ HOMEG
 
   tui_begin
   trap 'tui_end; cleanup' EXIT INT TERM
+  ui_prof tui_begin
   tui_dims; hlayout; draw_home
+  ui_prof first_draw
   lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"
 
   while :; do

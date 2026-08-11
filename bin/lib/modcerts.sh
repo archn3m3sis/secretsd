@@ -96,14 +96,14 @@ certs_screen() {
       d="$(certs_days_left "$f")" || d=""
       [ -n "$d" ] || continue
       C_PATH[$n]="$f"
-      C_CN[$n]="$(certs_field "$f" cn)"; [ -n "${C_CN[$n]}" ] || C_CN[$n]="$(basename "$f")"
+      C_CN[$n]="$(certs_field "$f" cn)"; [ -n "${C_CN[$n]}" ] || C_CN[$n]="${f##*/}"
       C_DAYS[$n]="$d"
       C_END[$n]="$(certs_field "$f" notAfter)"
       C_N[$n]="${cnt:-1}"
       n=$(( n + 1 )); continue
     fi
     C_PATH[$n]="$f"
-    C_CN[$n]="${cn:-$(basename "$f")}"
+    C_CN[$n]="${cn:-${f##*/}}"
     C_DAYS[$n]=$(( (epoch - now) / 86400 ))
     C_END[$n]="$(certs_epoch_human "$epoch")"
     C_N[$n]="${cnt:-1}"

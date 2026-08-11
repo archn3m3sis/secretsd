@@ -133,7 +133,7 @@ PY_MAN
       d="$(certs_days_left "$f" 2>/dev/null)"     # fall back for this one file
       case "$d" in ''|*[!0-9-]*) continue ;; esac
     fi
-    subj="$(basename "$f")"
+    subj="${f##*/}"   # not basename: a fork per certificate, 58 of them, 259ms
     if   [ "$d" -lt 0 ];             then printf 'expired|cert|%s|expired %s day(s) ago — %s|%s\n' "$subj" "$(( -d ))" "$f" "$d"
     elif [ "$d" -le "$urgent_w" ];   then printf 'urgent|cert|%s|expires in %s day(s) — %s|%s\n'   "$subj" "$d" "$f" "$d"
     elif [ "$d" -le "$soon_w" ];     then printf 'soon|cert|%s|expires in %s day(s) — %s|%s\n'     "$subj" "$d" "$f" "$d"
@@ -282,14 +282,16 @@ alert_schedule_install() {   # $1 hour-of-day (0-23)  $2 minute (0-59)
 PLIST
   launchctl unload "$ALERT_PLIST" >/dev/null 2>&1
   launchctl load   "$ALERT_PLIST" >/dev/null 2>&1
-  launchctl list 2>/dev/null | ui_match_sub 'com.secretsd.alerts'
+  ui_launchd_invalidate
+  ui_launchd_jobs | ui_match_sub 'com.secretsd.alerts'
 }
 
-alert_scheduled() { launchctl list 2>/dev/null | ui_match_sub 'com.secretsd.alerts'; }
+alert_scheduled() { ui_launchd_jobs | ui_match_sub 'com.secretsd.alerts'; }
 
 alert_schedule_remove() {
   launchctl unload "$ALERT_PLIST" >/dev/null 2>&1
   rm -f "$ALERT_PLIST" 2>/dev/null
+  ui_launchd_invalidate
   ! alert_scheduled
 }
 
@@ -475,7 +477,7 @@ alerts_screen() {
         if alert_schedule_install "$hour" "$minute"; then
           ui_ok "$(printf 'scheduled daily at %02d:%02d' "$hour" "$minute")"
           ui_note "verified loaded in launchctl:"
-          launchctl list 2>/dev/null | ui_grep_show 'com.secretsd.alerts' | sed 's/^/     /'
+          ui_launchd_jobs | ui_grep_show 'com.secretsd.alerts' | sed 's/^/     /'
           sec_log_start alerts
           sec_log "$(printf 'expiry alerts scheduled daily at %02d:%02d' "$hour" "$minute")"
         else

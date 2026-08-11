@@ -48,6 +48,78 @@ _gum() {
 
 ui_interactive() { [ -t 1 ] && [ -c /dev/tty ] 2>/dev/null; }
 
+# --- profiling ----------------------------------------------------------------
+# SECRETSD_PROFILE=1 prints a timing line per instrumented step to stderr.
+# Startup cost is the kind of thing you MEASURE — every previous guess about
+# where this program spent its first second was wrong, including two of mine.
+SEC_PROF_T0="${EPOCHREALTIME:-0}"
+ui_prof() {
+  [ "${SECRETSD_PROFILE:-0}" = "1" ] || return 0
+  local now="${EPOCHREALTIME:-0}"
+  awk -v a="$SEC_PROF_LAST" -v b="$now" -v z="$SEC_PROF_T0" -v n="$1" \
+    'BEGIN{ printf "  %-28s %7.1f ms   (t+%.0f ms)\n", n, (b-a)*1000, (b-z)*1000 }' >&2
+  SEC_PROF_LAST="$now"
+}
+SEC_PROF_LAST="$SEC_PROF_T0"
+
+# ui_launchd_jobs -> `launchctl list` output, read at most ONCE per process.
+#
+# The dashboard asks whether the monitor is scheduled and whether the alerts
+# agent is scheduled, and each question forked launchctl and read the entire job
+# table. Two questions, two full scans, ~35ms, on every launch. The answer
+# cannot change while the program is drawing one screen.
+#
+# Anything that CHANGES a schedule calls ui_launchd_invalidate, so the very next
+# read is fresh — a stale "scheduled: yes" straight after removing it would be a
+# lie, and this program does not get to lie about whether something is running.
+SEC_LAUNCHD_JOBS=""
+SEC_LAUNCHD_READ=0
+ui_launchd_jobs() {
+  if [ "$SEC_LAUNCHD_READ" = "0" ]; then
+    SEC_LAUNCHD_JOBS="$(launchctl list 2>/dev/null)"
+    SEC_LAUNCHD_READ=1
+  fi
+  printf '%s\n' "$SEC_LAUNCHD_JOBS"
+}
+ui_launchd_invalidate() { SEC_LAUNCHD_READ=0; SEC_LAUNCHD_JOBS=""; }
+
+# --- external tool versions ---------------------------------------------------
+# ui_tool_version NAME COMMAND... -> the version string, cached.
+#
+# `ykman --version` costs 195 MILLISECONDS — it is a Python program, and paying
+# its interpreter start-up just to print a string was a fifth of this program's
+# entire launch time. `claude --version` is another 45ms. Neither answer changes
+# until the binary itself changes, so the cache is keyed on the binary's own
+# mtime and size: replace or upgrade the tool and it is re-read, otherwise it is
+# a single grep of a small file.
+#
+# The dashboard shows this to tell you a tool is PRESENT and roughly which
+# build. It is not a compatibility gate, and nothing decides anything from it.
+ui_tool_version() {
+  local name="$1"; shift
+  local bin stamp cache line
+  bin="$(command -v "$name" 2>/dev/null)" || return 1
+  [ -n "$bin" ] || return 1
+  stamp="$(sec_stat mtime "$bin" 2>/dev/null)-$(sec_stat size "$bin" 2>/dev/null)"
+  cache="${SEC_ROOT:-$HOME}/state/tool-versions"
+
+  if [ -f "$cache" ]; then
+    line="$(awk -F'\t' -v n="$name" -v s="$stamp" '$1==n && $2==s {print $3; exit}' "$cache")"
+    [ -n "$line" ] && { printf '%s' "$line"; return 0; }
+  fi
+
+  local v; v="$("$@" 2>/dev/null | head -1)"
+  [ -n "$v" ] || return 1
+  mkdir -p "$(dirname "$cache")" 2>/dev/null
+  # drop any previous row for this tool, then append the fresh one
+  if [ -f "$cache" ]; then
+    awk -F'\t' -v n="$name" '$1!=n' "$cache" > "$cache.tmp" 2>/dev/null && mv -f "$cache.tmp" "$cache"
+  fi
+  printf '%s\t%s\t%s\n' "$name" "$stamp" "$v" >> "$cache"
+  chmod 600 "$cache" 2>/dev/null
+  printf '%s' "$v"
+}
+
 # --- pipeline-safe matching ---------------------------------------------------
 #
 # `producer | grep -q PATTERN` is a trap in any script that sets `pipefail`:

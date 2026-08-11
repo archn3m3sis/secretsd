@@ -208,11 +208,13 @@ PLIST
   chmod 600 "$MON_PLIST"
   launchctl unload "$MON_PLIST" >/dev/null 2>&1
   launchctl load "$MON_PLIST" >/dev/null 2>&1
-  launchctl list 2>/dev/null | ui_match_sub 'com.secretsd.monitor'
+  ui_launchd_invalidate
+  ui_launchd_jobs | ui_match_sub 'com.secretsd.monitor'
 }
-mon_scheduled() { launchctl list 2>/dev/null | ui_match_sub 'com.secretsd.monitor'; }
+mon_scheduled() { ui_launchd_jobs | ui_match_sub 'com.secretsd.monitor'; }
 mon_schedule_remove() {
   launchctl unload "$MON_PLIST" >/dev/null 2>&1
+  ui_launchd_invalidate
   rm -f "$MON_PLIST"
   ! mon_scheduled
 }

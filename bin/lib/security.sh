@@ -83,47 +83,76 @@ sec_enforce_not_root() {
 # --- 3/4. permission enforcement ----------------------------------------------
 # Reports offending paths. REPAIR=1 is available for an explicit, user-initiated
 # fix from the posture screen — it is never passed on a normal launch.
+# sec_stat_batch PATH... -> "path<TAB>mode<TAB>owner" for every path, in ONE
+# stat call. Asking stat once per file per field is what made the launch gate
+# cost 61ms of pure fork overhead on every single invocation of the program.
+sec_stat_batch() {
+  [ "$#" -gt 0 ] || return 0
+  # A LITERAL tab, not "\t": BSD stat does not interpret escape sequences in its
+  # format string, so it emitted the two characters backslash-t and every row
+  # failed to split — the audit found nothing and reported everything fine.
+  # GNU stat does interpret them, which is exactly how a bug like this survives
+  # on one platform and hides on the other.
+  local TAB; TAB="$(printf '\t')"
+  case "$SEC_STAT" in
+    gnu) stat -c "%n${TAB}%a${TAB}%U"   "$@" 2>/dev/null ;;
+    *)   stat -f "%N${TAB}%Lp${TAB}%Su" "$@" 2>/dev/null ;;
+  esac
+}
+
 sec_audit_permissions() {   # $1 = repair? (0/1)  -> prints findings, returns 1 if any
-  local repair="${1:-0}" bad=0 f m
+  local repair="${1:-0}" bad=0 f me kd
+  me="$(id -un)"
 
-  # the age private key is the crown jewel
+  # Collect every path FIRST, then ask stat once. The previous version called
+  # sec_mode/sec_owner per file — two forks each, ~15 files — and it runs on
+  # every launch of the program, including the dashboard.
+  local -a paths=() kinds=()
   if [ -f "$SOPS_AGE_KEY_FILE" ]; then
-    if [ "$(sec_owner "$SOPS_AGE_KEY_FILE")" != "$(id -un)" ]; then
-      printf 'OWNER %s %s\n' "$SOPS_AGE_KEY_FILE" "$(sec_owner "$SOPS_AGE_KEY_FILE")"
-      bad=1
-    fi
-    if sec_mode_bad "$SOPS_AGE_KEY_FILE"; then
-      m="$(sec_mode "$SOPS_AGE_KEY_FILE")"
-      printf 'MODE %s %s\n' "$SOPS_AGE_KEY_FILE" "$m"
-      [ "$repair" = "1" ] && chmod 600 "$SOPS_AGE_KEY_FILE"
-      bad=1
-    fi
-    local kd; kd="$(dirname "$SOPS_AGE_KEY_FILE")"
-    if sec_mode_bad "$kd"; then
-      printf 'MODE %s %s\n' "$kd" "$(sec_mode "$kd")"
-      [ "$repair" = "1" ] && chmod 700 "$kd"
-      bad=1
-    fi
+    paths+=("$SOPS_AGE_KEY_FILE"); kinds+=(key)
+    kd="$(dirname "$SOPS_AGE_KEY_FILE")"
+    paths+=("$kd"); kinds+=(keydir)
   fi
-
-  # every encrypted store
   for f in "$SEC_SECRETS"/*.enc.* "$SEC_ENC_DIR"/*.enc.*; do
     [ -f "$f" ] || continue
-    if sec_mode_bad "$f"; then
-      printf 'MODE %s %s\n' "$f" "$(sec_mode "$f")"
-      [ "$repair" = "1" ] && chmod 600 "$f"
-      bad=1
-    fi
+    paths+=("$f"); kinds+=(store)
   done
-
-  # metadata files: no values, but they map your whole access surface
   for f in "$SEC_SECRETS"/*.yaml "$SEC_SECRETS"/*.md; do
     [ -f "$f" ] || continue
-    if sec_mode_bad "$f"; then
-      printf 'MODE %s %s\n' "$f" "$(sec_mode "$f")"
-      [ "$repair" = "1" ] && chmod 600 "$f"
-      bad=1
+    paths+=("$f"); kinds+=(meta)
+  done
+  [ "${#paths[@]}" -gt 0 ] || return 0
+
+  # one stat call for all of them
+  local -A MODE=() OWNER=()
+  local sp sm so
+  while IFS="$(printf '\t')" read -r sp sm so; do
+    [ -n "$sp" ] || continue
+    MODE["$sp"]="$sm"; OWNER["$sp"]="$so"
+  done <<STATB
+$(sec_stat_batch "${paths[@]}")
+STATB
+
+  local i=0 n="${#paths[@]}" path kind mode owner
+  while [ "$i" -lt "$n" ]; do
+    path="${paths[$i]}"; kind="${kinds[$i]}"
+    mode="${MODE[$path]:-}"; owner="${OWNER[$path]:-}"
+    i=$(( i + 1 ))
+    [ -n "$mode" ] || continue
+
+    if [ "$kind" = key ] && [ -n "$owner" ] && [ "$owner" != "$me" ]; then
+      printf 'OWNER %s %s\n' "$path" "$owner"; bad=1
     fi
+
+    # group or other bits set at all is too open for any of these
+    case "$mode" in
+      *[1-7][0-7]|*[0-7][1-7])
+        printf 'MODE %s %s\n' "$path" "$mode"
+        if [ "$repair" = "1" ]; then
+          case "$kind" in keydir) chmod 700 "$path" ;; *) chmod 600 "$path" ;; esac
+        fi
+        bad=1 ;;
+    esac
   done
 
   return $(( bad == 0 ? 0 : 1 ))

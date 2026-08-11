@@ -58,7 +58,7 @@ yubikey_screen() {
   ui_clear; printf '\n  '; tui_grad_violet 'looking for a YubiKey…'; printf '\n'
 
   if ! yk_present; then
-    tui_page "YUBIKEY" "ykman $(ykman --version 2>/dev/null | awk '{print $NF}') · no key attached"
+    tui_page "YUBIKEY" "ykman $(ui_tool_version ykman ykman --version | awk '{print $NF}') · no key attached"
     printf '\n'
     ui_warn "no YubiKey is plugged in right now"
     ui_note "Plug one in and press enter. Nothing here reads the key until you do."

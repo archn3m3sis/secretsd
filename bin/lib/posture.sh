@@ -25,28 +25,64 @@ posture_emit() { printf '%s|%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" "${6:-}";
 posture_scan() {
   local f m n p
 
-  # 1. SSH private keys with no passphrase — a bearer credential on disk
+  # --- SSH keys: enumerate ONCE, stat ONCE, parse the config ONCE ------------
+  #
+  # Checks 1, 2 and 4 all walk the same key list. This used to call
+  # keys_private_paths three times, sec_mode/sec_mode_bad twice per key, and
+  # keys_hosts_using once per key from two different checks — each of those an
+  # awk parse of the entire ~/.ssh/config. Measured at ~260ms of the scan.
+  local -a KEYS=()
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    if ! keys_has_passphrase "$f"; then
-      local uses; uses="$(keys_hosts_using "$f")"
-      posture_emit crit ssh-nopass guided "SSH key has no passphrase" \
-        "$(basename "$f") authenticates to ${uses:-nothing configured} with no secret to unlock it" "$f"
-    fi
-  done <<SCAN1
+    KEYS+=("$f")
+  done <<SCANK
 $(keys_private_paths)
-SCAN1
+SCANK
 
-  # 2. SSH private key permissions
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    if sec_mode_bad "$f"; then
-      posture_emit crit ssh-perms auto "SSH private key is readable by others" \
-        "$(basename "$f") is mode $(sec_mode "$f"); anyone on this host can take it" "$f"
+  local -A KHOSTS=() KMODE=()
+  local kb kh sp sm so
+  while IFS="$(printf '\t')" read -r kb kh; do
+    [ -n "$kb" ] || continue
+    KHOSTS["$kb"]="$kh"
+  done <<KMAP
+$(keys_hosts_map)
+KMAP
+
+  if [ "${#KEYS[@]}" -gt 0 ]; then
+    while IFS="$(printf '\t')" read -r sp sm so; do
+      [ -n "$sp" ] || continue
+      KMODE["$sp"]="$sm"
+    done <<KSTAT
+$(sec_stat_batch "${KEYS[@]}")
+KSTAT
+  fi
+
+  local uses base mode
+  for f in ${KEYS[@]+"${KEYS[@]}"}; do
+    base="${f##*/}"
+    uses="${KHOSTS[$base]:-}"
+    mode="${KMODE[$f]:-}"
+
+    # 1. no passphrase — a bearer credential on disk
+    if ! keys_has_passphrase "$f"; then
+      posture_emit crit ssh-nopass guided "SSH key has no passphrase" \
+        "$base authenticates to ${uses:-nothing configured} with no secret to unlock it" "$f"
     fi
-  done <<SCAN2
-$(keys_private_paths)
-SCAN2
+
+    # 2. readable by anyone else on the host
+    case "$mode" in
+      ''|600|400|000) ;;
+      *[1-7][0-7]|*[0-7][1-7])
+        posture_emit crit ssh-perms auto "SSH private key is readable by others" \
+          "$base is mode $mode; anyone on this host can take it" "$f" ;;
+    esac
+
+    # 4. kept and trusted somewhere, but referenced by nothing
+    if [ -z "$uses" ]; then
+      posture_emit low ssh-orphan info "SSH key is referenced by nothing" \
+        "$base is not used by any Host block, but may still be authorised somewhere" "$f"
+    fi
+  done
 
   # 3. IdentityFile entries pointing at keys that do not exist
   while IFS= read -r f; do
@@ -56,17 +92,6 @@ SCAN2
   done <<SCAN3
 $(keys_config_gaps)
 SCAN3
-
-  # 4. Orphan keys — kept, trusted somewhere, referenced by nothing
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    if [ -z "$(keys_hosts_using "$f")" ]; then
-      posture_emit low ssh-orphan info "SSH key is referenced by nothing" \
-        "$(basename "$f") is not used by any Host block, but may still be authorised somewhere" "$f"
-    fi
-  done <<SCAN4
-$(keys_private_paths)
-SCAN4
 
   # 5. ForwardAgent — lets any host you reach use your keys against other hosts
   if grep -qiE '^[[:space:]]*forwardagent[[:space:]]+yes' "$HOME/.ssh/config" 2>/dev/null; then
@@ -92,7 +117,7 @@ SCAN4
     [ -f "$f" ] || continue
     if sec_mode_bad "$f"; then
       posture_emit med meta-perms auto "Credential metadata is world-readable" \
-        "$(basename "$f") is mode $(sec_mode "$f") and maps what you hold and where it is used" "$f"
+        "${f##*/} is mode $(sec_mode "$f") and maps what you hold and where it is used" "$f"
     fi
   done
 
@@ -103,7 +128,7 @@ SCAN4
       [ -f "$f" ] || continue
       if grep -qE '^[A-Za-z_][A-Za-z0-9_]*=.{12,}' "$f" 2>/dev/null; then
         posture_emit high proj-dotenv guided "Plaintext .env in a project" \
-          "$(basename "$p")/$(basename "$f") holds $(grep -cE '^[A-Za-z_][A-Za-z0-9_]*=' "$f") value(s) in the clear, next to code" "$f"
+          "${p##*/}/${f##*/} holds $(grep -cE '^[A-Za-z_][A-Za-z0-9_]*=' "$f") value(s) in the clear, next to code" "$f"
       fi
     done
   done <<SCAN9
@@ -116,7 +141,7 @@ SCAN9
     n="$(grep -ciE '(api[_-]?key|secret|token|passwd|password)[=: ][A-Za-z0-9_./+-]{16,}' "$f" 2>/dev/null || true)"
     if [ "${n:-0}" -gt 0 ]; then
       posture_emit high shell-history guided "$n credential-shaped line(s) in shell history" \
-        "$(basename "$f") contains what look like pasted secrets; history is plaintext and long-lived" "$f"
+        "${f##*/} contains what look like pasted secrets; history is plaintext and long-lived" "$f"
     fi
   done
 
@@ -162,16 +187,57 @@ SCAN9
 SEC_POSTURE_CACHE="$SEC_SECRETS/.posture-cache"
 SEC_POSTURE_TTL="${SEC_POSTURE_TTL:-300}"
 
+# posture_refresh_bg — rescan detached, replacing the cache atomically.
+# The lock is a mkdir, which is atomic on every filesystem this will ever see;
+# without it, opening several terminals at once starts several scans that all
+# write the same file.
+posture_refresh_bg() {
+  local lock="$SEC_POSTURE_CACHE.lock"
+  mkdir "$lock" 2>/dev/null || return 0        # a refresh is already running
+  (
+    trap 'rmdir "$lock" 2>/dev/null' EXIT
+    local tmp="$SEC_POSTURE_CACHE.$$"
+    if posture_scan > "$tmp" 2>/dev/null; then
+      chmod 600 "$tmp" 2>/dev/null
+      mv -f "$tmp" "$SEC_POSTURE_CACHE" 2>/dev/null
+    else
+      rm -f "$tmp" 2>/dev/null
+    fi
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
+# posture_scan_cached — NEVER makes the caller wait for a rescan.
+#
+# The dashboard used to block on this. The scan takes about half a second (15
+# ssh-keygen probes, a stat per key, an ~/.ssh/config parse per key), and with a
+# 300-second TTL that meant every launch after a five-minute gap paid it: 0.4s
+# normally, 1.0s at random. Unpredictable is worse than slow — you stop trusting
+# that the program has started.
+#
+# Now a present cache is served immediately, however old, and a stale one
+# triggers a detached refresh for next time. Only a FIRST run with no cache at
+# all scans synchronously, because showing nothing would be a lie.
 posture_scan_cached() {
   local age now mtime
   if [ -f "$SEC_POSTURE_CACHE" ]; then
+    cat "$SEC_POSTURE_CACHE"
     mtime="$(sec_stat mtime "$SEC_POSTURE_CACHE")"
     now="$(date +%s)"; age=$(( now - ${mtime:-0} ))
-    if [ "$age" -lt "$SEC_POSTURE_TTL" ]; then cat "$SEC_POSTURE_CACHE"; return 0; fi
+    [ "$age" -ge "$SEC_POSTURE_TTL" ] && posture_refresh_bg
+    return 0
   fi
   posture_scan > "$SEC_POSTURE_CACHE" 2>/dev/null
   chmod 600 "$SEC_POSTURE_CACHE" 2>/dev/null
   cat "$SEC_POSTURE_CACHE"
+}
+
+# posture_cache_age -> seconds since the cache was written, or empty
+posture_cache_age() {
+  [ -f "$SEC_POSTURE_CACHE" ] || return 1
+  local m; m="$(sec_stat mtime "$SEC_POSTURE_CACHE")"
+  [ -n "$m" ] || return 1
+  printf '%s' $(( $(date +%s) - m ))
 }
 posture_invalidate() { rm -f "$SEC_POSTURE_CACHE" 2>/dev/null; }
 

@@ -21,17 +21,24 @@ doctor_probe() {
 
   # 1 · Toolchain ------------------------------------------------------------
   if command -v sops >/dev/null 2>&1; then
-    doc_rec ok Toolchain "sops present" "$(sops --version 2>/dev/null | head -1 | awk '{print $2}')"
+    # --disable-version-check is NOT cosmetic. Plain `sops --version` makes an
+    # outbound HTTPS request to github.com to see whether a newer release
+    # exists: measured at 525ms against 18ms with the check off. That is both
+    # the slowest thing in this report AND an unrequested network call from a
+    # program whose entire premise is that your credentials stay on your
+    # machine. On an air-gapped host it is 525ms of waiting for a timeout.
+    doc_rec ok Toolchain "sops present" \
+      "$(ui_tool_version sops sops --version --disable-version-check | awk '{print $2}')"
   else
     doc_rec fail Toolchain "sops missing" "nothing can be decrypted without it"
   fi
   if command -v age >/dev/null 2>&1; then
-    doc_rec ok Toolchain "age present" "$(age --version 2>/dev/null)"
+    doc_rec ok Toolchain "age present" "$(ui_tool_version age age --version)"
   else
     doc_rec warn Toolchain "age binary missing" "sops has it built in, but key generation needs the binary"
   fi
   if command -v gum >/dev/null 2>&1; then
-    doc_rec ok Toolchain "gum present" "$(gum --version 2>/dev/null | awk '{print $3}') — full visual layer"
+    doc_rec ok Toolchain "gum present" "$(ui_tool_version gum gum --version | awk '{print $3}') — full visual layer"
   else
     doc_rec warn Toolchain "gum missing" "degraded to plain prompts"
   fi

@@ -110,6 +110,7 @@ tui_dims() {
   case "$TUI_ROWS" in ''|*[!0-9]*) TUI_ROWS=24 ;; esac
   [ "$TUI_COLS" -lt 40 ] && TUI_COLS=40
   [ "$TUI_ROWS" -lt 10 ] && TUI_ROWS=10
+  tui_bg_build "$TUI_COLS"
   return 0
 }
 
@@ -213,53 +214,66 @@ tui_modrow() {
   else                      _add "    " "n"; fi
   _add "$mark" "h"; _add "  " "n"
   _add "$label" "t"; _add " " "n"
-  _add "$(tui_repeat '·' "$leader")" "l"
+  local _lead=""; [ "$leader" -gt 0 ] && { printf -v _lead "%${leader}s" ''; _lead="${_lead// /·}"; }
+  _add "$_lead" "l"
   _add " " "n"; _add "$count" "t"; _add "  " "n"
   _add "$glyph" "d"; _add " " "n"; _add "$dlab" "m"
-  _add "$(tui_repeat ' ' 2)" "n"
+  _add "  " "n"
   unset -f _add
 
-  local n="${#txt}" i=0 code prev="" fg step=4
+  # The title colour depends on whether the ROW is selected, not on the column,
+  # so it is resolved ONCE. It used to be a command substitution inside the
+  # per-character loop: a subshell for every title character, of every row, on
+  # every repaint — measured as the largest single cost in painting the screen.
+  local fg_t
+  if [ "$sel" = "1" ]; then fg_t="$T_B$T_TEXT"; else fg_t="$T_MUTE"; fi
+
+  # Build the whole row into ONE string and write it in a single printf. Writing
+  # character by character means a write syscall per column per row; at 120
+  # columns and 30 rows that is 3,600 writes to paint one screen.
+  local n="${#txt}" i=0 code prev="" fg step=4 out=""
   while [ "$i" -lt "$n" ]; do
     if [ "$sel" = "1" ] && [ $(( i % step )) -eq 0 ]; then
-      printf '%s' "$(tui_bg_at "$i" "$TUI_COLS")"
+      out="$out${TUI_BG_RAMP[$i]:-}"
       prev=""
     fi
     code="${map:$i:1}"
     case "$code" in
       a) fg="$T_ACCENT" ;;
       h) fg="$hue" ;;
-      t) fg="$([ "$sel" = "1" ] && printf '%s' "$T_B$T_TEXT" || printf '%s' "$T_MUTE")" ;;
+      t) fg="$fg_t" ;;
       l) fg="$T_LEAD" ;;
       d) fg="$dotcol" ;;
       m) fg="$T_MUTE" ;;
       *) fg="$T_DIM" ;;
     esac
-    [ "$fg" != "$prev" ] && { printf '%s' "$fg"; prev="$fg"; }
-    printf '%s' "${txt:$i:1}"
+    if [ "$fg" != "$prev" ]; then out="$out$fg"; prev="$fg"; fi
+    out="$out${txt:$i:1}"
     i=$(( i + 1 ))
   done
-  printf '%s\n' "$T_RS"
+  printf '%s%s\n' "$out" "$T_RS"
 }
 
 # tui_moddesc SELECTED TEXT — the secondary description line under a module row
 # tui_moddesc SELECTED TEXT [ICON_BOTTOM_ROW] [HUE]
 # When an icon bottom row is supplied it is painted in the same column as the
 # icon above it, so the mark reads as one 8x8 pictogram across both lines.
+# One printf per row, not six. Every separate printf is a write syscall, and a
+# full repaint issues one of these per module.
 tui_moddesc() {
-  local sel="$1" text="$2" icon="${3:-}" hue="${4:-}" bg=''
+  local sel="$1" text="$2" icon="${3:-}" hue="${4:-}" bg='' lead pad used out
   [ "$sel" = "1" ] && bg="$T_SELBG"
-  printf '%s' "$bg"
   if [ -n "$icon" ]; then
-    if [ "$sel" = "1" ]; then printf '  %s▌%s ' "$T_ACCENT" "$bg"; else printf '    '; fi
-    printf '%s%s%s  ' "$hue" "$icon" "$bg"
-    printf '%s%s%s' "$T_DIM" "$text" "$T_RS$bg"
-    tui_padn "$TUI_COLS" $(( 4 + ${#icon} + 2 + ${#text} ))
+    if [ "$sel" = "1" ]; then lead="  ${T_ACCENT}▌${bg} "; else lead="    "; fi
+    used=$(( 4 + ${#icon} + 2 + ${#text} ))
+    out="${bg}${lead}${hue}${icon}${bg}  ${T_DIM}${text}${T_RS}${bg}"
   else
-    printf '         %s%s%s' "$T_DIM" "$text" "$T_RS$bg"
-    tui_padn "$TUI_COLS" $(( 9 + ${#text} ))
+    used=$(( 9 + ${#text} ))
+    out="${bg}         ${T_DIM}${text}${T_RS}${bg}"
   fi
-  printf '%s\n' "$T_RS"
+  pad=$(( TUI_COLS - used )); [ "$pad" -lt 0 ] && pad=0
+  printf -v lead "%${pad}s" ''
+  printf '%s%s%s\n' "$out" "$lead" "$T_RS"
 }
 
 # --- footer -------------------------------------------------------------------
@@ -399,26 +413,29 @@ tui_menu() {
           j=0; while [ "$j" -lt "${#label}" ]; do rmap="${rmap}t"; j=$(( j + 1 )); done
           rtxt="$rtxt$(tui_repeat ' ' $(( TUI_COLS - 5 - ${#label} )))"
           j=${#rmap}; while [ "$j" -lt "${#rtxt}" ]; do rmap="${rmap}n"; j=$(( j + 1 )); done
+          # accumulate, then write once — see tui_modrow
+          local rout=""
           j=0
           while [ "$j" -lt "${#rtxt}" ]; do
-            [ $(( j % 4 )) -eq 0 ] && { printf '%s' "$(tui_bg_at "$j" "$TUI_COLS")"; prevfg=""; }
+            [ $(( j % 4 )) -eq 0 ] && { rout="$rout${TUI_BG_RAMP[$j]:-}"; prevfg=""; }
             code="${rmap:$j:1}"
             case "$code" in a) fgc="$T_ACCENT" ;; t) fgc="$T_B$T_TEXT" ;; *) fgc="$T_DIM" ;; esac
-            [ "$fgc" != "$prevfg" ] && { printf '%s' "$fgc"; prevfg="$fgc"; }
-            printf '%s' "${rtxt:$j:1}"
+            [ "$fgc" != "$prevfg" ] && { rout="$rout$fgc"; prevfg="$fgc"; }
+            rout="$rout${rtxt:$j:1}"
             j=$(( j + 1 ))
           done
-          printf '%s\n' "$T_RS"
+          printf '%s%s\n' "$rout" "$T_RS"
           if [ "$mode" = detail ]; then
             local dtxt="       $desc"
             dtxt="$dtxt$(tui_repeat ' ' $(( TUI_COLS - ${#dtxt} > 0 ? TUI_COLS - ${#dtxt} : 0 )))"
+            local dout=""
             j=0
             while [ "$j" -lt "${#dtxt}" ]; do
-              [ $(( j % 4 )) -eq 0 ] && printf '%s%s' "$(tui_bg_at "$j" "$TUI_COLS")" "$T_MUTE"
-              printf '%s' "${dtxt:$j:1}"
+              [ $(( j % 4 )) -eq 0 ] && dout="$dout${TUI_BG_RAMP[$j]:-}$T_MUTE"
+              dout="$dout${dtxt:$j:1}"
               j=$(( j + 1 ))
             done
-            printf '%s\n' "$T_RS"
+            printf '%s%s\n' "$dout" "$T_RS"
           fi
         else
           printf '     %s%s%s' "$T_MUTE" "$label" "$T_RS"
@@ -538,6 +555,33 @@ tui_grad_hot()    { tui_grad "$1" 251 191 36 244 114 182; }
 # as lit rather than as a flat block of colour.
 TUI_MASK_R1=44; TUI_MASK_G1=32; TUI_MASK_B1=78
 TUI_MASK_R2=16; TUI_MASK_G2=14; TUI_MASK_B2=22
+# TUI_BG_RAMP — the mask gradient, computed ONCE per terminal width.
+#
+# tui_bg_at was called inside a command substitution every fourth column of every
+# masked row. A 120-column row is 30 subshells, and a full repaint of the
+# dashboard fired hundreds. The colour depends only on (column, width), so it is
+# computed once and looked up thereafter.
+TUI_BG_RAMP=()
+TUI_BG_RAMP_W=0
+tui_bg_build() {
+  local w="$1" i r g b d
+  [ "$w" = "$TUI_BG_RAMP_W" ] && return 0
+  TUI_BG_RAMP=(); TUI_BG_RAMP_W="$w"
+  if [ "${COLORTERM:-}" != "truecolor" ] && [ "${COLORTERM:-}" != "24bit" ]; then
+    i=0; while [ "$i" -le "$w" ]; do TUI_BG_RAMP[$i]="$T_SELBG"; i=$(( i + 4 )); done
+    return 0
+  fi
+  d="$w"; [ "$d" -lt 1 ] && d=1
+  i=0
+  while [ "$i" -le "$w" ]; do
+    r=$(( TUI_MASK_R1 + (TUI_MASK_R2 - TUI_MASK_R1) * i / d ))
+    g=$(( TUI_MASK_G1 + (TUI_MASK_G2 - TUI_MASK_G1) * i / d ))
+    b=$(( TUI_MASK_B1 + (TUI_MASK_B2 - TUI_MASK_B1) * i / d ))
+    printf -v "TUI_BG_RAMP[$i]" '\033[48;2;%d;%d;%dm' "$r" "$g" "$b"
+    i=$(( i + 4 ))
+  done
+}
+
 tui_bg_at() {
   local pos="$1" w="$2" r g b d
   if [ "${COLORTERM:-}" != "truecolor" ] && [ "${COLORTERM:-}" != "24bit" ]; then
@@ -561,7 +605,7 @@ tui_mask_span() {
   while [ "$i" -lt "$n" ]; do
     if [ $(( i % step )) -eq 0 ]; then
       pos=$(( from + i ))
-      printf '%s' "$(tui_bg_at "$pos" "$w")"
+      printf '%s' "${TUI_BG_RAMP[$pos]:-$(tui_bg_at "$pos" "$w")}"
     fi
     printf '%s%s' "$fg" "${text:$i:1}"
     i=$(( i + 1 ))
