@@ -1301,15 +1301,25 @@ PYACC
     && ok "open and closed groups are marked differently" \
     || no "no disclosure marker on category rows"
 
-  # the remembered state is credential-adjacent metadata: it must be 600
-  grep -q 'chmod 600 "$MENUSTATE"' "$W" \
-    && ok "the remembered menu state is written mode 600" \
-    || no "the menu state file is not locked down"
+  # THE MENU ALWAYS OPENS COLLAPSED. An interface that opens in whatever shape
+  # you happened to leave it is a different interface every time — you cannot
+  # learn where anything is, and a session left three groups deep greets the
+  # next launch with a wall of rows.
+  if grep -q '_save_open\|MENUSTATE' "$W"; then
+    no "the menu still remembers its expansion state between runs"
+  else
+    ok "the menu never persists its expansion state"
+  fi
 
-  # and it must be scoped to the data root, not scattered in \$HOME
-  grep -q 'MENUSTATE="$SEC_ROOT/state/menu-open"' "$W" \
-    && ok "the menu state lives in the data root" \
-    || no "the menu state is written somewhere unexpected"
+  # every category must be initialised closed, with no exceptions
+  opened="$(grep -cE '^\s*C_OPEN\[[0-9]+\]=1' "$W" || true)"
+  [ "${opened:-0}" = "0" ] && ok "no category is opened by default" \
+                           || no "$opened category(ies) start expanded"
+
+  # and it must clear any state file an older version left behind
+  grep -q 'rm -f "$SEC_ROOT/state/menu-open"' "$W" \
+    && ok "a stale state file from an older version is removed" \
+    || no "an old menu-state file would be left lying around"
 
   # NO ROW MAY EVER WRAP. A wrapped row pushes every absolutely-positioned row
   # below it out of place, so the grid stops matching its line map — the

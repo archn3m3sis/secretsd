@@ -786,30 +786,15 @@ HOMEG
   C_VALUE[2]="$nproj project(s) · $nsess session(s)"
   C_VALUE[3]="$pkmsys"
 
-  # --- which groups were open last time ----------------------------------------
-  # Remembered, because re-opening the same two groups on every launch is the
-  # kind of small friction that makes people stop using a thing.
-  local MENUSTATE="$SEC_ROOT/state/menu-open"
-  if [ -f "$MENUSTATE" ]; then
-    _c=0
-    while [ "$_c" -lt "$cn" ]; do
-      grep -qx "${C_ID[$_c]}" "$MENUSTATE" 2>/dev/null && C_OPEN[$_c]=1
-      _c=$(( _c + 1 ))
-    done
-  else
-    C_OPEN[1]=1        # first run: SECURITY open, because that is the point
-  fi
-
-  _save_open() {
-    mkdir -p "$(dirname "$MENUSTATE")" 2>/dev/null
-    : > "$MENUSTATE"
-    local i=0
-    while [ "$i" -lt "$cn" ]; do
-      [ "${C_OPEN[$i]}" = "1" ] && printf '%s\n' "${C_ID[$i]}" >> "$MENUSTATE"
-      i=$(( i + 1 ))
-    done
-    chmod 600 "$MENUSTATE" 2>/dev/null
-  }
+  # --- ALWAYS OPEN COLLAPSED ---------------------------------------------------
+  # No remembered state, deliberately. An interface that opens in whatever shape
+  # you happened to leave it is a different interface every time: you cannot
+  # learn where things are, and a screen you left three groups deep greets you
+  # with a wall. Every launch starts from the same four rows.
+  #
+  # The state file this used to write is removed on sight, so an upgrade does
+  # not leave a stale one behind that nothing reads.
+  rm -f "$SEC_ROOT/state/menu-open" 2>/dev/null
 
   # --- the visible list: categories, plus the children of the open ones --------
   local -a V_KIND V_REF
@@ -918,7 +903,7 @@ HOMEG
           sel="$_p"
         fi
         if [ "${V_KIND[$sel]}" = cat ]; then
-          C_OPEN[${V_REF[$sel]}]=0; _save_open
+          C_OPEN[${V_REF[$sel]}]=0;
           build_visible; hlayout; draw_home
           lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"
         fi
@@ -929,7 +914,6 @@ HOMEG
           # a category toggles in place — the whole point of the accordion
           _r="${V_REF[$sel]}"
           if [ "${C_OPEN[$_r]}" = "1" ]; then C_OPEN[$_r]=0; else C_OPEN[$_r]=1; fi
-          _save_open
           build_visible; hlayout; draw_home
           lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"
           continue
@@ -956,11 +940,11 @@ HOMEG
       char:E)
         # expand everything — the old flat list, for when you know what you want
         _c=0; while [ "$_c" -lt "$cn" ]; do C_OPEN[$_c]=1; _c=$(( _c + 1 )); done
-        _save_open; build_visible; hlayout; draw_home
+         build_visible; hlayout; draw_home
         lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"; continue ;;
       char:C)
         _c=0; while [ "$_c" -lt "$cn" ]; do C_OPEN[$_c]=0; _c=$(( _c + 1 )); done
-        _save_open; build_visible; sel=0; hlayout; draw_home
+         build_visible; sel=0; hlayout; draw_home
         lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"; continue ;;
       search) tui_end; palette_screen; tui_begin; tui_dims; hlayout; draw_home
               lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"; continue ;;
