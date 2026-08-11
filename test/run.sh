@@ -1168,6 +1168,55 @@ print(r.tag, len(r.findall('node')))" 2>/dev/null)"
   fi
 fi
 
+
+# ==============================================================================
+# `run` accepts both calling forms
+#
+# The single-string form is the one documented for agents, and it had NEVER
+# worked: one argument was exec'd as if the whole command line were a program
+# name, so it died with `exec: <entire command>: not found`. Anything following
+# that documentation got exit 127 and no credential — silently, since a failed
+# injection looks the same as a command that simply failed.
+# ==============================================================================
+if want runform; then
+  group "run calling forms"
+
+  r="$(sd run -- sh -c 'printf argv' 2>/dev/null | tail -1)"
+  [ "$r" = "argv" ] && ok "argv form runs the command" || no "argv form gave [$r]"
+
+  r="$(sd run -- 'printf shellform' 2>/dev/null | tail -1)"
+  [ "$r" = "shellform" ] && ok "the documented single-string form runs the command" \
+                         || no "single-string form gave [$r]"
+
+  # and the point of it: the string must see the injected environment
+  r="$(sd run -- 'printf "%s" "${DEMO_TOKEN:+present}"' 2>/dev/null | tail -1)"
+  [ "$r" = "present" ] && ok "the single-string form sees injected credentials" \
+                       || no "no credential reached the shell form [$r]"
+
+  # a lone argument with no shell syntax is a PROGRAM, and must stay exec'd
+  # directly — wrapping it in a shell changes what \$0 and signals mean
+  if sd run -- true >/dev/null 2>&1; then
+    ok "a bare program name is still exec'd directly"
+  else
+    no "a bare program name no longer runs"
+  fi
+
+  # --only must still narrow the environment in the shell form
+  r="$(sd run --only DEMO_TOKEN -- 'env | grep -c "^DEMO_HOST=" || true' 2>/dev/null | tail -1)"
+  [ "$r" = "0" ] && ok "--only still excludes other keys in the shell form" \
+                 || no "--only leaked another key in the shell form [$r]"
+
+  # the value itself must never appear in the run log
+  sd run -- 'printf "%s" "${DEMO_TOKEN:+x}"' >/dev/null 2>&1
+  leak=""
+  v="$(SECRETSD_HOME="$DATA" SOPS_AGE_KEY_FILE="$AGE_KEY" sops --config /dev/null -d \
+       --input-type dotenv --output-type dotenv "$DATA/secrets/api-keys.enc.env" 2>/dev/null \
+       | sed -n 's/^DEMO_TOKEN=//p')"
+  if [ -n "$v" ] && grep -rqF -- "$v" "$DATA/run-logs" 2>/dev/null; then leak=yes; fi
+  [ -z "$leak" ] && ok "no credential value reaches the run log" \
+                 || no "a credential value was written to the run log"
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"
