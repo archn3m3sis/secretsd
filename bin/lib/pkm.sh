@@ -114,6 +114,19 @@ pkm_draw_mark() {
     *)           A=("${OBS_ART[@]}");            R=("${OBS_REG[@]}") ;;
   esac
 
+  # Resolve this system's four colours ONCE. pkm_palette used to be called
+  # inside a command substitution per CELL — 22 x 10 = 220 subshells for a
+  # single repaint, measured at 231ms. The screen repaints the mark on every
+  # arrow press, so holding a key left the program redrawing almost full time
+  # and the terminal echoed the keystrokes it received meanwhile: the ^[[B
+  # litter down the side of the screen.
+  local c1 c2 c3 c4 c0
+  c1="$(pkm_palette "$sys" 1)"; c2="$(pkm_palette "$sys" 2)"
+  c3="$(pkm_palette "$sys" 3)"; c4="$(pkm_palette "$sys" 4)"
+  c0="$(pkm_palette "$sys" .)"
+
+  # One write per row rather than one per character, for the same reason every
+  # other row painter in this program accumulates first.
   r=0
   while [ "$r" -lt "${#A[@]}" ]; do
     out=""; prev=""
@@ -121,7 +134,9 @@ pkm_draw_mark() {
     while [ "$i" -lt 22 ]; do
       ch="${A[$r]:$i:1}"; [ -n "$ch" ] || ch=" "
       reg="${R[$r]:$i:1}"
-      c="$(pkm_palette "$sys" "$reg")"
+      case "$reg" in
+        1) c="$c1" ;; 2) c="$c2" ;; 3) c="$c3" ;; 4) c="$c4" ;; *) c="$c0" ;;
+      esac
       [ "$c" != "$prev" ] && { out="$out$c"; prev="$c"; }
       out="$out$ch"
       i=$(( i + 1 ))

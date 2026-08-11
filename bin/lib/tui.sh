@@ -115,8 +115,39 @@ tui_dims() {
 }
 
 # --- screen control -----------------------------------------------------------
-tui_begin() { printf '\033[?1049h\033[?25l\033[2J\033[H'; }
-tui_end()   { printf '\033[?25h\033[?1049l'; }
+# --- entering and leaving full-screen mode ------------------------------------
+#
+# ECHO MUST BE OFF FOR THE WHOLE SESSION, not just while a read is running.
+#
+# `read -rsn1` silences echo only for the moment it is reading. Every keystroke
+# that arrives while the program is REDRAWING is echoed by the terminal driver
+# instead — so holding an arrow key printed raw `^[[B` and `^[[A` down the side
+# of the screen, wherever the cursor happened to be left by the last absolutely
+# positioned write. The faster you cycle, the more of them you get.
+#
+# The original terminal settings are captured once and restored on the way out,
+# so this cannot leave a shell with echo disabled. tui_begin is called many
+# times as screens nest; only the FIRST call captures, or the second would save
+# the already-modified state and restore the wrong thing.
+TUI_STTY_SAVED=""
+tui_begin() {
+  if [ -z "$TUI_STTY_SAVED" ]; then
+    TUI_STTY_SAVED="$( { stty -g </dev/tty; } 2>/dev/null )"
+  fi
+  { stty -echo </dev/tty; } 2>/dev/null
+  printf '\033[?1049h\033[?25l\033[2J\033[H'
+}
+tui_end() {
+  printf '\033[?25h\033[?1049l'
+  tui_stty_restore
+}
+
+# Restoring is separate so the EXIT trap can call it too: a crash between
+# tui_begin and tui_end must not hand the user a shell that does not echo.
+tui_stty_restore() {
+  [ -n "$TUI_STTY_SAVED" ] || return 0
+  { stty "$TUI_STTY_SAVED" </dev/tty; } 2>/dev/null
+}
 tui_home()  { printf '\033[H'; }
 tui_clear_below() { printf '\033[J'; }
 

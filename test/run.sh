@@ -1338,6 +1338,51 @@ PYACC
   fi
 fi
 
+
+# ==============================================================================
+# the terminal must never echo keystrokes
+#
+# `read -rsn1` silences echo only while it is reading. Anything typed while the
+# program is REDRAWING is echoed by the terminal driver — so holding an arrow
+# key printed raw ^[[B down the side of the screen. Echo has to be off for the
+# whole session, and restored on every exit path.
+# ==============================================================================
+if want echo; then
+  group "terminal echo"
+
+  T="$ROOT/bin/lib/tui.sh"
+
+  grep -q 'stty -echo </dev/tty' "$T" \
+    && ok "echo is disabled for the whole full-screen session" \
+    || no "the TUI never disables echo — keystrokes will print during a repaint"
+
+  grep -q 'tui_stty_restore' "$T" \
+    && ok "there is an explicit restore" \
+    || no "no way to restore the terminal settings"
+
+  # a crash between begin and end must NOT leave a shell that does not echo
+  grep -q 'tui_stty_restore' "$BIN" \
+    && ok "the exit trap restores the terminal even on a crash" \
+    || no "a crash would leave the terminal with echo off"
+
+  # only the FIRST tui_begin may capture: screens nest, and a later capture
+  # would save the already-modified state and restore the wrong thing
+  grep -q 'if \[ -z "$TUI_STTY_SAVED" \]' "$T" \
+    && ok "the original settings are captured once, not on every nested screen" \
+    || no "nested screens would overwrite the saved terminal state"
+
+  # and the repaint that opened the window must stay cheap: resolving the
+  # palette per CELL was 220 subshells and 231ms for one logo
+  if grep -q 'c1="$(pkm_palette' "$ROOT/bin/lib/pkm.sh"; then
+    ok "the mark palette is resolved once per mark, not per cell"
+  else
+    no "the mark painter resolves colour per cell — hundreds of subshells"
+  fi
+  hits="$(grep -c 'out="$out\$ch"' "$ROOT/bin/lib/pkm.sh" || true)"
+  [ "${hits:-0}" -ge 1 ] && ok "the mark is accumulated and written per row" \
+                         || no "the mark is written character by character"
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"
