@@ -42,9 +42,58 @@ keys_type()    { keys_fingerprint "$1" | awk '{print $NF}' | tr -d '()'; }
 # keys_has_passphrase PATH -> 0 if protected, 1 if NOT protected (bearer on disk)
 # `-y -P ''` prints the PUBLIC key when the empty passphrase works. Nothing
 # private is ever emitted, and no passphrase prompt can appear.
+# keys_has_passphrase PATH -> 0 when the key is protected, 1 when it is bare.
+#
+# The probe is `ssh-keygen -y -P ''`, which is the only honest way to ask: it
+# tries to read the key with an empty passphrase and succeeds only if there
+# isn't one. It costs a fork each, and posture_scan asks for every key on the
+# machine — 15 keys, 88ms — on every scan.
+#
+# The answer changes only when the key FILE changes, so it is cached against the
+# file's mtime and size. Re-encrypting a key with a passphrase rewrites it, and
+# the next scan re-probes. A cache that could go stale here would be dangerous:
+# it would keep reporting a key as protected after you removed the passphrase.
+declare -A KEYS_PASS_MAP=()
+KEYS_PASS_LOADED=0
+keys_pass_cachefile() { printf '%s/state/key-passphrase' "${SEC_ROOT:-$HOME}"; }
+keys_pass_load() {
+  [ "$KEYS_PASS_LOADED" = "1" ] && return 0
+  KEYS_PASS_LOADED=1
+  local c p st v; c="$(keys_pass_cachefile)"
+  [ -f "$c" ] || return 0
+  while IFS="$(printf '\t')" read -r p st v; do
+    [ -n "$p" ] || continue
+    KEYS_PASS_MAP["$p:$st"]="$v"
+  done < "$c"
+}
+
+# $1 path  [$2 stamp] — callers that already stat'd the file pass the stamp in,
+# which is how posture_scan avoids two more forks per key.
 keys_has_passphrase() {
-  ssh-keygen -y -P '' -f "$1" >/dev/null 2>&1 && return 1
-  return 0
+  local f="$1" cache stamp hit
+  cache="$(keys_pass_cachefile)"
+  stamp="${2:-}"
+  [ -n "$stamp" ] || stamp="$(sec_stat mtime "$f" 2>/dev/null)-$(sec_stat size "$f" 2>/dev/null)"
+
+  keys_pass_load
+  hit="${KEYS_PASS_MAP[$f:$stamp]:-}"
+  case "$hit" in
+    yes) return 0 ;;
+    no)  return 1 ;;
+  esac
+
+  local verdict rc
+  if ssh-keygen -y -P '' -f "$f" >/dev/null 2>&1; then verdict=no;  rc=1
+  else                                                 verdict=yes; rc=0; fi
+
+  mkdir -p "$(dirname "$cache")" 2>/dev/null
+  if [ -f "$cache" ]; then
+    awk -F'\t' -v p="$f" '$1!=p' "$cache" > "$cache.tmp" 2>/dev/null && mv -f "$cache.tmp" "$cache"
+  fi
+  printf '%s\t%s\t%s\n' "$f" "$stamp" "$verdict" >> "$cache"
+  chmod 600 "$cache" 2>/dev/null
+  KEYS_PASS_MAP["$f:$stamp"]="$verdict"
+  return "$rc"
 }
 
 # keys_hosts_using PATH -> Host aliases whose IdentityFile resolves to this key

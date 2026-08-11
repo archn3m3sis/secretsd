@@ -39,8 +39,8 @@ posture_scan() {
 $(keys_private_paths)
 SCANK
 
-  local -A KHOSTS=() KMODE=()
-  local kb kh sp sm so
+  local -A KHOSTS=() KMODE=() KSTAMP=()
+  local kb kh sp sm so smt sz
   while IFS="$(printf '\t')" read -r kb kh; do
     [ -n "$kb" ] || continue
     KHOSTS["$kb"]="$kh"
@@ -49,9 +49,9 @@ $(keys_hosts_map)
 KMAP
 
   if [ "${#KEYS[@]}" -gt 0 ]; then
-    while IFS="$(printf '\t')" read -r sp sm so; do
+    while IFS="$(printf '\t')" read -r sp sm so smt sz; do
       [ -n "$sp" ] || continue
-      KMODE["$sp"]="$sm"
+      KMODE["$sp"]="$sm"; KSTAMP["$sp"]="$smt-$sz"
     done <<KSTAT
 $(sec_stat_batch "${KEYS[@]}")
 KSTAT
@@ -64,7 +64,7 @@ KSTAT
     mode="${KMODE[$f]:-}"
 
     # 1. no passphrase — a bearer credential on disk
-    if ! keys_has_passphrase "$f"; then
+    if ! keys_has_passphrase "$f" "${KSTAMP[$f]:-}"; then
       posture_emit crit ssh-nopass guided "SSH key has no passphrase" \
         "$base authenticates to ${uses:-nothing configured} with no secret to unlock it" "$f"
     fi

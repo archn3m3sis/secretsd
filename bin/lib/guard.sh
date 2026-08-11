@@ -125,7 +125,20 @@ exit 0
 HOOK
 }
 
-guard_installed() { [ -f "$1/.git/hooks/pre-commit" ] && grep -q 'Installed by secretsd' "$1/.git/hooks/pre-commit" 2>/dev/null; }
+guard_installed() { [ -f "$1/.git/hooks/pre-commit" ] && ui_match_sub 'Installed by secretsd' < "$1/.git/hooks/pre-commit" 2>/dev/null; }
+
+# guard_installed_set REPO... -> the subset that carry our hook, one per line.
+# One grep for the whole fleet instead of one per repository; the dashboard
+# checks every discovered repo on every launch.
+guard_installed_set() {
+  [ "$#" -gt 0 ] || return 0
+  local r; local -a hooks=()
+  for r in "$@"; do
+    [ -f "$r/.git/hooks/pre-commit" ] && hooks+=("$r/.git/hooks/pre-commit")
+  done
+  [ "${#hooks[@]}" -gt 0 ] || return 0
+  grep -l 'Installed by secretsd' "${hooks[@]}" 2>/dev/null | sed 's|/\.git/hooks/pre-commit$||'
+}
 
 guard_install() {   # $1 repo path
   local repo="$1" hook="$1/.git/hooks/pre-commit"

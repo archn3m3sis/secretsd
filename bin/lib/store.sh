@@ -148,8 +148,12 @@ for k in os.environ.get("SEC_KEYLIST", "").split():
     if v is not None and "\n" in v:
         print(k)
 PY
-  SEC_KEYLIST="$(sec_names "$f" | tr '\n' ' ')" \
-    sops exec-env "$f" "python3 $py" 2>/dev/null
+  # Honour a caller-supplied SEC_KEYLIST. doctor already enumerated the store
+  # for its own checks; making this decrypt a second time to ask the same
+  # question is 20ms for an answer already in hand.
+  local list="${SEC_KEYLIST:-}"
+  [ -n "$list" ] || list="$(sec_names "$f" | tr '\n' ' ')"
+  SEC_KEYLIST="$list" sops exec-env "$f" "python3 $py" 2>/dev/null
   rm -f "$py"
 }
 

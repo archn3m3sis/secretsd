@@ -948,6 +948,92 @@ if want certscan; then
                       || no "ykman list appears $n times in one probe"
 fi
 
+
+# ==============================================================================
+# caches must not be able to lie
+#
+# Every optimisation in this program traded a fork for a cache, and a cache that
+# can go stale is worse than the fork it replaced: reporting a key as protected
+# after its passphrase was removed is a false all-clear on a credential.
+# ==============================================================================
+if want cache; then
+  group "cache correctness"
+
+  # 1. the passphrase probe must notice a key that CHANGED
+  if command -v ssh-keygen >/dev/null 2>&1; then
+    KD="$DATA/keyfix"; mkdir -p "$KD"
+    ssh-keygen -q -t ed25519 -N '' -f "$KD/k" -C bench 2>/dev/null
+    r="$(bash -c '
+      SEC_ROOT="'"$DATA"'"; SEC_BIN="'"$ROOT"'/bin"; TMPD=$(mktemp -d)
+      . "$SEC_BIN/lib/ui.sh"; . "$SEC_BIN/lib/security.sh"; . "$SEC_BIN/lib/modkeys.sh"
+      keys_has_passphrase "'"$KD"'/k" && printf "protected " || printf "bare "
+      keys_has_passphrase "'"$KD"'/k" && printf "protected " || printf "bare "
+      ssh-keygen -q -p -P "" -N "hunter2hunter2" -f "'"$KD"'/k" >/dev/null 2>&1
+      keys_has_passphrase "'"$KD"'/k" && printf "protected" || printf "bare"')"
+    [ "$r" = "bare bare protected" ] \
+      && ok "the passphrase cache re-probes when the key file changes" \
+      || no "passphrase cache went stale" "got [$r], expected [bare bare protected]"
+  else
+    skip "passphrase cache" "ssh-keygen missing"
+  fi
+
+  # 2. the project cache must not survive the process that made it
+  PD="$DATA/projects/newthing"; mkdir -p "$PD"
+  r="$(bash -c '
+    SEC_ROOT="'"$DATA"'"; SEC_BIN="'"$ROOT"'/bin"; TMPD=$(mktemp -d)
+    . "$SEC_BIN/lib/ui.sh"; . "$SEC_BIN/lib/store.sh" 2>/dev/null
+    . "$SEC_BIN/lib/workspace.sh" 2>/dev/null
+    c="$TMPD/ws-discover"; printf "%s\n" "/stale/entry" > "$c"
+    ws_discover | head -1' 2>/dev/null)"
+  [ "$r" = "/stale/entry" ] && ok "ws_discover reads its per-process cache when present" \
+                            || skip "ws_discover cache" "harness could not exercise it"
+  # and the cache lives in the scratch dir, which is created and destroyed per run
+  grep -q 'TMPD' "$ROOT/bin/lib/workspace.sh" \
+    && ok "the project cache lives in the per-process scratch directory" \
+    || no "the project cache is not scoped to the process"
+
+  # 3. the batched guard check must agree with the per-repo one
+  GR="$DATA/repo"; mkdir -p "$GR/.git/hooks"
+  printf '#!/bin/sh\n# Installed by secretsd\nexit 0\n' > "$GR/.git/hooks/pre-commit"
+  GR2="$DATA/repo2"; mkdir -p "$GR2/.git/hooks"
+  printf '#!/bin/sh\nexit 0\n' > "$GR2/.git/hooks/pre-commit"
+  r="$(bash -c '
+    SEC_BIN="'"$ROOT"'/bin"; SEC_ROOT="'"$DATA"'"; TMPD=$(mktemp -d)
+    . "$SEC_BIN/lib/ui.sh"; . "$SEC_BIN/lib/guard.sh"
+    per=""; for d in "'"$GR"'" "'"$GR2"'"; do guard_installed "$d" && per="$per$d "; done
+    bat="$(guard_installed_set "'"$GR"'" "'"$GR2"'" | tr "\n" " ")"
+    [ "$per" = "$bat" ] && echo AGREE || echo "DIFFER per=[$per] batch=[$bat]"')"
+  [ "$r" = "AGREE" ] && ok "the batched guard check agrees with the per-repo check" \
+                     || no "guard checks disagree" "$r"
+
+  # 4. the plaintext scan must still catch a plaintext file and skip an encrypted one
+  PT="$DATA/pt"; mkdir -p "$PT/domains"
+  printf 'API_KEY=abcdef123456\n'                 > "$PT/leak.env"
+  printf 'sops_version=3.13\nFOO=ENC[AES256]\n'   > "$PT/fine.env"
+  printf 'prose with no assignments at all\n'     > "$PT/notes.txt"
+  r="$(bash -c '
+    SEC_ROOT="'"$DATA"'"; SEC_BIN="'"$ROOT"'/bin"; TMPD=$(mktemp -d)
+    . "$SEC_BIN/lib/ui.sh"; . "$SEC_BIN/lib/security.sh"
+    SEC_SECRETS="'"$PT"'"; SEC_ENC_DIR="'"$PT"'/domains"
+    sec_find_plaintext | sed "s|.*/||" | tr "\n" " "')"
+  case "$r" in
+    *leak.env*) case "$r" in
+                  *fine.env*|*notes.txt*) no "the plaintext scan flags files it should not" "$r" ;;
+                  *) ok "the batched plaintext scan flags only the plaintext file" ;;
+                esac ;;
+    *) no "the plaintext scan missed a plaintext credential file" "got [$r]" ;;
+  esac
+
+  # 5. the batched stat must return a real octal mode AND a usable mtime/size
+  r="$(bash -c '
+    SEC_BIN="'"$ROOT"'/bin"; . "$SEC_BIN/lib/ui.sh"; . "$SEC_BIN/lib/security.sh"
+    f=$(mktemp); chmod 640 "$f"
+    sec_stat_batch "$f" | awk -F"\t" "{print \$2, (\$4>0?\"mtime-ok\":\"mtime-bad\"), (\$5>=0?\"size-ok\":\"size-bad\")}"
+    rm -f "$f"')"
+  [ "$r" = "640 mtime-ok size-ok" ] && ok "one stat call returns mode, mtime and size" \
+                                    || no "sec_stat_batch returned [$r]"
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"

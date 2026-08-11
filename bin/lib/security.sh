@@ -95,8 +95,8 @@ sec_stat_batch() {
   # on one platform and hides on the other.
   local TAB; TAB="$(printf '\t')"
   case "$SEC_STAT" in
-    gnu) stat -c "%n${TAB}%a${TAB}%U"   "$@" 2>/dev/null ;;
-    *)   stat -f "%N${TAB}%Lp${TAB}%Su" "$@" 2>/dev/null ;;
+    gnu) stat -c "%n${TAB}%a${TAB}%U${TAB}%Y${TAB}%s"    "$@" 2>/dev/null ;;
+    *)   stat -f "%N${TAB}%Lp${TAB}%Su${TAB}%m${TAB}%z"   "$@" 2>/dev/null ;;
   esac
 }
 
@@ -125,8 +125,8 @@ sec_audit_permissions() {   # $1 = repair? (0/1)  -> prints findings, returns 1 
 
   # one stat call for all of them
   local -A MODE=() OWNER=()
-  local sp sm so
-  while IFS="$(printf '\t')" read -r sp sm so; do
+  local sp sm so smt sz
+  while IFS="$(printf '\t')" read -r sp sm so smt sz; do
     [ -n "$sp" ] || continue
     MODE["$sp"]="$sm"; OWNER["$sp"]="$so"
   done <<STATB
@@ -241,16 +241,27 @@ sec_enforce_all() {
 }
 
 # sec_find_plaintext -> plaintext credential files under secrets/, one per line
+# TWO greps per candidate file was 32 forks on a normal store, paid on every
+# single command because the launch gate calls this. awk reads them all in one
+# pass and applies both rules per file.
 sec_find_plaintext() {
   local f
+  local -a cand=()
   for f in "$SEC_SECRETS"/* "$SEC_SECRETS"/.[!.]* "$SEC_ENC_DIR"/*; do
     [ -f "$f" ] || continue
+    [ -s "$f" ] || continue
     case "$f" in
       *.enc.env|*.enc.yaml|*.enc.json|*.md|*.yaml|*.bak-*|*.selftest-only.bak) continue ;;
     esac
-    if [ -s "$f" ] && ! grep -q 'sops_' "$f" 2>/dev/null \
-       && grep -qE '^[A-Za-z_][A-Za-z0-9_]*=' "$f" 2>/dev/null; then
-      printf '%s\n' "$f"
-    fi
+    cand+=("$f")
   done
+  [ "${#cand[@]}" -gt 0 ] || return 0
+  awk '
+    FNR == 1 { sops[FILENAME] = 0; assign[FILENAME] = 0; seen[FILENAME] = 1 }
+    /sops_/                          { sops[FILENAME] = 1 }
+    /^[A-Za-z_][A-Za-z0-9_]*=/       { assign[FILENAME] = 1 }
+    END {
+      for (f in seen) if (!sops[f] && assign[f]) print f
+    }
+  ' "${cand[@]}" 2>/dev/null | sort
 }

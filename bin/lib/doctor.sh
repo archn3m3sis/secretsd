@@ -78,10 +78,16 @@ doctor_probe() {
   fi
 
   # 4 · Store integrity ------------------------------------------------------
+  #
+  # ONE enumeration for the whole report. sec_names is a full sops decrypt plus
+  # a python parse, about 20ms, and this function used to ask five separate
+  # times — sec_count, the coverage comparison, the multi-line check, and twice
+  # more besides. The answer cannot change while one report is being written.
+  sec_names > "$TMPD/sk" 2>/dev/null || : > "$TMPD/sk"
   local n ml
-  n="$(sec_count)"
+  n="$(sec_nlines < "$TMPD/sk")"
   doc_rec ok "Store integrity" "$n credentials enumerate cleanly" ""
-  ml="$(sec_multiline_names 2>/dev/null | sec_nlines)"
+  ml="$(SEC_KEYLIST="$(tr '\n' ' ' < "$TMPD/sk")" sec_multiline_names 2>/dev/null | sec_nlines)"
   if [ "${ml:-0}" -gt 0 ]; then
     doc_rec warn "Store integrity" "$ml value(s) contain newlines" \
       "enumeration is JSON-based so reading is safe, but dotenv EDITING of those keys mangles them — use the certs or keys module"
@@ -91,7 +97,6 @@ doctor_probe() {
 
   # 5 · Documentation coverage ----------------------------------------------
   sec_manifest_keys > "$TMPD/mk" 2>/dev/null || : > "$TMPD/mk"
-  sec_names > "$TMPD/sk" 2>/dev/null || : > "$TMPD/sk"
   local undoc doc pct
   undoc="$(comm -23 "$TMPD/sk" "$TMPD/mk" 2>/dev/null | sec_nlines)"
   doc=$(( n - undoc )); pct=0; [ "$n" -gt 0 ] && pct=$(( doc * 100 / n ))

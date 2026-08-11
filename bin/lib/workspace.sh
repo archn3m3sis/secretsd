@@ -42,7 +42,21 @@ ROOTS
 }
 
 # ws_discover -> one project path per line (a git repo under a root)
+# ws_discover — the project list. CACHED in the scratch directory for the life
+# of the process: it is a filesystem walk over every project root, and the
+# dashboard alone asks three times (the project count, the commit-guard sweep,
+# and the posture check for stray .env files). Projects do not appear while one
+# screen is being drawn. TMPD is per-process and removed on exit, so the cache
+# cannot outlive the run that made it.
 ws_discover() {
+  local cache="${TMPD:-${TMPDIR:-/tmp}}/ws-discover"
+  if [ -s "$cache" ]; then printf '%s\n' "$(<"$cache")"; return 0; fi
+  ws_discover_scan > "$cache" 2>/dev/null
+  [ -s "$cache" ] || return 0
+  printf '%s\n' "$(<"$cache")"
+}
+
+ws_discover_scan() {
   local root d
   while IFS= read -r root; do
     [ -d "$root" ] || continue
@@ -649,13 +663,16 @@ home_screen() {
   local kithave guarded gtotal
   kithave="$(ls "$HOME"/Documents/secretsd-recovery-*.age 2>/dev/null | sec_nlines)"
   gtotal=0; guarded=0
+  local -a _repos=()
   while IFS= read -r _p; do
     [ -d "$_p/.git" ] || continue
-    gtotal=$(( gtotal + 1 ))
-    guard_installed "$_p" && guarded=$(( guarded + 1 ))
+    gtotal=$(( gtotal + 1 )); _repos+=("$_p")
   done <<HOMEG
 $(ws_discover 2>/dev/null | sort -u)
 HOMEG
+  if [ "${#_repos[@]}" -gt 0 ]; then
+    guarded="$(guard_installed_set "${_repos[@]}" | sec_nlines)"
+  fi
   _row recovery  '⡏⣩⣍⢹' "$N_RED"      "RECOVERY"  "$([ "${kithave:-0}" -gt 0 ] && echo "$kithave kit(s)" || echo "no kit")" \
        "$([ "${kithave:-0}" -gt 0 ] && echo ok || echo err)" \
        "$([ "${kithave:-0}" -gt 0 ] && echo "verified on build" || echo "one key, one file, no backup")" \
