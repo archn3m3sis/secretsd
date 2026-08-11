@@ -148,7 +148,47 @@ if want "grep-c"; then
 fi
 if want "local-expand"; then
   # local a="$1" b="$a" — all arguments expand before any assignment takes effect
-  hits="$(grep -rnE 'local [a-z_]+="\$[0-9]" [a-z_]+="\$[a-z_]+' "$ROOT/bin" 2>/dev/null | grep -vE ':[0-9]+: *#' | grep -c . || true)"
+  # Two shapes, both fatal: `local a="$1" b="$a"` and the subscript form
+  # `local a="$1" b="${arr[$a]}"`. The second slipped past a guard written only
+  # for the first, and cost a blank dashboard.
+  # A REGEX CANNOT EXPRESS THIS. The danger is a value that references a name
+  # assigned EARLIER IN THE SAME `local` statement — every assignment there is
+  # expanded before any takes effect, so the reference reads an unbound (or
+  # stale) variable. `local v="$1" tmp="$TMPD/x"` is perfectly safe: $TMPD is a
+  # global. A pattern broad enough to catch the first flagged nine instances of
+  # the second, which is how a guard becomes noise and then gets ignored.
+  hits="$(python3 - "$ROOT" <<'PYLOCAL'
+import os, re, sys
+root = sys.argv[1]
+bad = []
+for base, _, files in os.walk(os.path.join(root, "bin")):
+    for fn in files:
+        p = os.path.join(base, fn)
+        try:
+            lines = open(p, encoding="utf-8", errors="replace").read().split("\n")
+        except OSError:
+            continue
+        for i, line in enumerate(lines, 1):
+            st = line.strip()
+            if not st.startswith("local ") or st.startswith("#"):
+                continue
+            # The `local` statement ENDS at the first ; or && — anything after
+            # that is a separate command and may legitimately reference a name
+            # the local just declared (`local x=""; x="${x}..."` is fine).
+            st = re.split(r";|&&|\|\|", st, 1)[0]
+            # names assigned, in order, with their values
+            parts = re.findall(r'([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|\S+)', st)
+            seen = []
+            for name, val in parts:
+                for earlier in seen:
+                    if re.search(r"\$\{?" + re.escape(earlier) + r"\b", val):
+                        bad.append("%s:%d %s <- %s" % (os.path.relpath(p, root), i, name, earlier))
+                seen.append(name)
+print(len(bad))
+for b in bad[:5]:
+    print(b, file=sys.stderr)
+PYLOCAL
+)"
   if [ "${hits:-0}" = "0" ]; then ok "no 'local a=\$1 b=\$a' self-reference"
   else no "'local a=\$1 b=\$a' self-reference present" "$hits instance(s)"; fi
 fi
@@ -1215,6 +1255,87 @@ if want runform; then
   if [ -n "$v" ] && grep -rqF -- "$v" "$DATA/run-logs" 2>/dev/null; then leak=yes; fi
   [ -z "$leak" ] && ok "no credential value reaches the run log" \
                  || no "a credential value was written to the run log"
+fi
+
+
+# ==============================================================================
+# the accordion
+#
+# Thirteen equal rows is a list, not an interface. Folding them into four groups
+# is only safe under one condition: a collapsed group must never hide a problem.
+# ==============================================================================
+if want accordion; then
+  group "accordion"
+
+  W="$ROOT/bin/lib/workspace.sh"
+
+  # every module row must belong to exactly ONE category — a module left out of
+  # the category table is unreachable from the dashboard, silently
+  r="$(python3 - "$W" <<'PYACC'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+mods = re.findall(r'^  _row ([a-z]+) ', src, re.M)
+cats = re.findall(r'_cat\s+(\w+)\s+\S+\s+"[^"]*"\s+"([^"]*)"\s+\\?\s*\n?\s*"([^"]*)"', src)
+kids = [k for c in cats for k in c[2].split()]
+missing = [m for m in mods if m not in kids]
+dupes   = sorted({k for k in kids if kids.count(k) > 1})
+orphan  = [k for k in kids if k not in mods]
+print("missing=%s dupes=%s orphan=%s" % (",".join(missing) or "-",
+                                         ",".join(dupes) or "-",
+                                         ",".join(orphan) or "-"))
+PYACC
+)"
+  case "$r" in
+    "missing=- dupes=- orphan=-") ok "every module belongs to exactly one category" ;;
+    *) no "the category table and the module rows disagree" "$r" ;;
+  esac
+
+  # a category must roll up the WORST state of its children, so folding a group
+  # away can never hide a failing one
+  grep -q 'err)  _bad=$(( _bad + 1 ));   _worst=err' "$W" \
+    && ok "a category takes the worst state of its children" \
+    || no "category state is not a roll-up of its children"
+
+  # the disclosure marker has to be visible without moving onto the row
+  grep -q "disc='▾'" "$W" && grep -q "disc='▸'" "$W" \
+    && ok "open and closed groups are marked differently" \
+    || no "no disclosure marker on category rows"
+
+  # the remembered state is credential-adjacent metadata: it must be 600
+  grep -q 'chmod 600 "$MENUSTATE"' "$W" \
+    && ok "the remembered menu state is written mode 600" \
+    || no "the menu state file is not locked down"
+
+  # and it must be scoped to the data root, not scattered in \$HOME
+  grep -q 'MENUSTATE="$SEC_ROOT/state/menu-open"' "$W" \
+    && ok "the menu state lives in the data root" \
+    || no "the menu state is written somewhere unexpected"
+
+  # NO ROW MAY EVER WRAP. A wrapped row pushes every absolutely-positioned row
+  # below it out of place, so the grid stops matching its line map — the
+  # category rows did exactly this at 70 columns until the painter learned to
+  # shrink. Every drawn line must be exactly the terminal width.
+  SHOT2="$ROOT/test/shot.py"
+  if [ -f "$SHOT2" ]; then
+    bad=""
+    for size in 70x18 100x24 118x30; do
+      c="${size%x*}"; r="${size#*x}"
+      w="$(SD_BIN="$BIN" SECRETSD_HOME="$DATA" SOPS_AGE_KEY_FILE="$AGE_KEY" \
+           python3 "$SHOT2" "$c" "$r" 2>/dev/null \
+           | python3 -c 'import sys; print(len({len(l.rstrip(chr(10))) for l in sys.stdin}))')"
+      [ "$w" = "1" ] || bad="$bad $size(widths=$w)"
+    done
+    [ -z "$bad" ] && ok "no dashboard row wraps at any size" \
+                  || no "rows of uneven width — something wrapped:$bad"
+  fi
+
+  # rendering: collapsed, the top level must be exactly the categories
+  SHOT="$ROOT/test/shot.py"
+  if [ -f "$SHOT" ]; then
+    ncat="$(grep -cE '^  _cat ' "$W" || true)"
+    [ "${ncat:-0}" -ge 3 ] && ok "the top level is $ncat categories, not 13 rows" \
+                           || no "expected at least 3 categories, found ${ncat:-0}"
+  fi
 fi
 
 # ==============================================================================

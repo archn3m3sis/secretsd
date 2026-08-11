@@ -724,32 +724,155 @@ HOMEG
   ui_prof rows_built
   unset -f _row
 
-  local sel=0 key prev i curline host gapn padrows extra block avail mode g
+  # --- CATEGORIES --------------------------------------------------------------
+  # Thirteen equal rows is a list, not an interface: everything shouts at the
+  # same volume and nothing tells you where to start. The top level is four
+  # groups that each answer one question — what do I have, is it safe, what am I
+  # working on, where does it get written down — and each opens in place.
+  #
+  # A category carries the WORST state of its children, so a collapsed group can
+  # never hide a problem. That is the whole condition for folding anything away.
+  local -a C_ID C_LABEL C_MARK C_HUE C_KIDS C_DESC C_OPEN C_VALUE C_DOT C_DLAB
+  local cn=0
+  _cat() {
+    C_ID[$cn]="$1"; C_MARK[$cn]="$2"; C_HUE[$cn]="$3"; C_LABEL[$cn]="$4"
+    C_KIDS[$cn]="$5"; C_DESC[$cn]="$6"; C_OPEN[$cn]=0
+    cn=$(( cn + 1 ))
+  }
+  _cat credentials '⣿⣿⣿' "$N_CYAN"   "CREDENTIALS" "vaults keychain yubikey" \
+       "the encrypted stores, and the two places credentials arrive from"
+  _cat security    '⣿⣿⡀' "$T_ERR"    "SECURITY"    "posture alerts recovery guard doctor" \
+       "what is exposed, what is expiring, and what happens if you lose the key"
+  _cat work        '⠙⣦⣴⠋' "$N_GREEN"  "WORK"        "workspace sessions inbox monitor" \
+       "projects, the Claude sessions on them, and what agents created for you"
+  _cat knowledge   '⣴⣹⣏⣦' "$N_VIOLET" "KNOWLEDGE"   "pkm" \
+       "the note system this credential layer is paired with"
+  unset -f _cat
+
+  # module index by id
+  _mod_idx() {
+    local want="$1" i=0
+    while [ "$i" -lt "$n" ]; do
+      [ "${H_ID[$i]}" = "$want" ] && { printf '%s' "$i"; return 0; }
+      i=$(( i + 1 ))
+    done
+    return 1
+  }
+
+  # roll each category up from its children, worst state wins
+  local _c=0 _k _ki _worst _bad _warnn _kids
+  while [ "$_c" -lt "$cn" ]; do
+    _worst=none; _bad=0; _warnn=0; _kids=0
+    for _k in ${C_KIDS[$_c]}; do
+      _ki="$(_mod_idx "$_k")" || continue
+      _kids=$(( _kids + 1 ))
+      case "${H_DOT[$_ki]}" in
+        err)  _bad=$(( _bad + 1 ));   _worst=err ;;
+        warn) _warnn=$(( _warnn + 1 )); [ "$_worst" = err ] || _worst=warn ;;
+        ok)   [ "$_worst" = none ] && _worst=ok ;;
+      esac
+    done
+    C_DOT[$_c]="$_worst"
+    if   [ "$_bad" -gt 0 ];   then C_DLAB[$_c]="$_bad need attention"
+    elif [ "$_warnn" -gt 0 ]; then C_DLAB[$_c]="$_warnn worth a look"
+    else                           C_DLAB[$_c]="nothing outstanding"; fi
+    C_VALUE[$_c]="$_kids section(s)"
+    _c=$(( _c + 1 ))
+  done
+
+  # headline numbers, so a folded group still says something concrete
+  C_VALUE[0]="$ncred credentials · $nvault store(s)"
+  C_VALUE[1]="$nfind finding(s) · $aexp expired"
+  C_VALUE[2]="$nproj project(s) · $nsess session(s)"
+  C_VALUE[3]="$pkmsys"
+
+  # --- which groups were open last time ----------------------------------------
+  # Remembered, because re-opening the same two groups on every launch is the
+  # kind of small friction that makes people stop using a thing.
+  local MENUSTATE="$SEC_ROOT/state/menu-open"
+  if [ -f "$MENUSTATE" ]; then
+    _c=0
+    while [ "$_c" -lt "$cn" ]; do
+      grep -qx "${C_ID[$_c]}" "$MENUSTATE" 2>/dev/null && C_OPEN[$_c]=1
+      _c=$(( _c + 1 ))
+    done
+  else
+    C_OPEN[1]=1        # first run: SECURITY open, because that is the point
+  fi
+
+  _save_open() {
+    mkdir -p "$(dirname "$MENUSTATE")" 2>/dev/null
+    : > "$MENUSTATE"
+    local i=0
+    while [ "$i" -lt "$cn" ]; do
+      [ "${C_OPEN[$i]}" = "1" ] && printf '%s\n' "${C_ID[$i]}" >> "$MENUSTATE"
+      i=$(( i + 1 ))
+    done
+    chmod 600 "$MENUSTATE" 2>/dev/null
+  }
+
+  # --- the visible list: categories, plus the children of the open ones --------
+  local -a V_KIND V_REF
+  local vn=0
+  build_visible() {
+    vn=0
+    local c=0 k ki
+    while [ "$c" -lt "$cn" ]; do
+      V_KIND[$vn]=cat; V_REF[$vn]="$c"; vn=$(( vn + 1 ))
+      if [ "${C_OPEN[$c]}" = "1" ]; then
+        for k in ${C_KIDS[$c]}; do
+          ki="$(_mod_idx "$k")" || continue
+          V_KIND[$vn]=mod; V_REF[$vn]="$ki"; vn=$(( vn + 1 ))
+        done
+      fi
+      c=$(( c + 1 ))
+    done
+  }
+  build_visible
+
+  local sel=0 key prev i curline host gapn padrows extra block avail mode g _p _r
   local lastcols=0 lastrows=0
   host="$(hostname -s 2>/dev/null || echo host)"
 
   draw_home_row() {
-    local k="$1" on="$2"
+    # SEPARATE statements on purpose. Every assignment in a single `local` is
+    # expanded before ANY of them takes effect, so `local k="$1" kind="${V[$k]}"`
+    # reads an unbound k. Already documented, already tested for, and still
+    # walked into — because the guard pattern only matched `b="$a"`, not
+    # `b="${arr[$a]}"`.
+    local k="$1" on="$2" disc lbl kind r
+    kind="${V_KIND[$k]}"; r="${V_REF[$k]}"
     printf '\033[%d;1H' "${H_LINE[$k]}"
-    tui_modrow "$on" "${H_TOP[$k]}" "${H_HUE[$k]}" "${H_LABEL[$k]}" \
-               "${H_VALUE[$k]}" "${H_DOT[$k]}" "${H_DLAB[$k]}"
-    [ "$mode" != compact ] && tui_moddesc "$on" "$(tui_fit "${H_DESC[$k]}" $(( TUI_COLS - 14 )))" \
-               "${H_BOT[$k]}" "${H_HUE[$k]}"
+    if [ "$kind" = cat ]; then
+      # ▾ open, ▸ closed — the disclosure state has to be visible without
+      # moving the selection onto it
+      if [ "${C_OPEN[$r]}" = "1" ]; then disc='▾'; else disc='▸'; fi
+      lbl="$disc ${C_LABEL[$r]}"
+      tui_modrow "$on" "${C_MARK[$r]}" "${C_HUE[$r]}" "$lbl" \
+                 "${C_VALUE[$r]}" "${C_DOT[$r]}" "${C_DLAB[$r]}"
+      [ "$mode" != compact ] && tui_moddesc "$on" "$(tui_fit "${C_DESC[$r]}" $(( TUI_COLS - 14 )))" \
+                 "" "${C_HUE[$r]}"
+    else
+      tui_modrow "$on" "${H_TOP[$r]}" "${H_HUE[$r]}" "${H_LABEL[$r]}" \
+                 "${H_VALUE[$r]}" "${H_DOT[$r]}" "${H_DLAB[$r]}" 4
+      [ "$mode" != compact ] && tui_moddesc "$on" "$(tui_fit "${H_DESC[$r]}" $(( TUI_COLS - 18 )))" \
+                 "${H_BOT[$r]}" "${H_HUE[$r]}" 4
+    fi
   }
 
   hlayout() {
     avail=$(( TUI_ROWS - 6 ))
-    if [ $(( n * 2 )) -le "$avail" ]; then mode=normal; block=$(( n * 2 ))
-    else mode=compact; block=$n; fi
+    if [ $(( vn * 2 )) -le "$avail" ]; then mode=normal; block=$(( vn * 2 ))
+    else mode=compact; block=$vn; fi
     gapn=0
-    if [ "$n" -gt 1 ]; then
-      gapn=$(( (avail - block) / (n - 1) ))
+    if [ "$vn" -gt 1 ]; then
+      gapn=$(( (avail - block) / (vn - 1) ))
       [ "$gapn" -lt 0 ] && gapn=0
       [ "$gapn" -gt 3 ] && gapn=3
     fi
-    padrows=$(( avail - block - gapn * (n - 1) )); [ "$padrows" -lt 0 ] && padrows=0
+    padrows=$(( avail - block - gapn * (vn - 1) )); [ "$padrows" -lt 0 ] && padrows=0
     extra=0
-    if [ "$n" -gt 1 ] && [ "$padrows" -gt 0 ] && [ "$padrows" -lt "$n" ]; then extra="$padrows"; padrows=0; fi
+    if [ "$vn" -gt 1 ] && [ "$padrows" -gt 0 ] && [ "$padrows" -lt "$vn" ]; then extra="$padrows"; padrows=0; fi
   }
 
   draw_home() {
@@ -757,19 +880,19 @@ HOMEG
     tui_header "$host" "bridging the secure informational gap between man and machine"
     curline=4
     i=0
-    while [ "$i" -lt "$n" ]; do
+    while [ "$i" -lt "$vn" ]; do
       H_LINE[$i]="$(( curline + 1 ))"
       draw_home_row "$i" "$([ "$i" = "$sel" ] && echo 1 || echo 0)"
       curline=$(( curline + 1 ))
       [ "$mode" != compact ] && curline=$(( curline + 1 ))
-      if [ "$i" -lt $(( n - 1 )) ]; then
+      if [ "$i" -lt $(( vn - 1 )) ]; then
         g=0; while [ "$g" -lt "$gapn" ]; do tui_blank; curline=$(( curline + 1 )); g=$(( g + 1 )); done
         [ "$i" -lt "$extra" ] && { tui_blank; curline=$(( curline + 1 )); }
       fi
       i=$(( i + 1 ))
     done
     g=0; while [ "$g" -lt "$padrows" ]; do tui_blank; g=$(( g + 1 )); done
-    tui_footer "↑↓ move" "↵ open" "/ find" "g generate" "a audit" "? keys" "q quit"
+    tui_footer "↑↓ move" "↵ open/expand" "← collapse" "E all" "C none" "/ find" "q quit"
     tui_clear_below
   }
 
@@ -784,11 +907,35 @@ HOMEG
     key="$(tui_readkey)" || break
     prev="$sel"
     case "$key" in
-      up)   sel=$(( sel - 1 )); [ "$sel" -lt 0 ] && sel=$(( n - 1 )) ;;
-      down) sel=$(( sel + 1 )); [ "$sel" -ge "$n" ] && sel=0 ;;
+      up)   sel=$(( sel - 1 )); [ "$sel" -lt 0 ] && sel=$(( vn - 1 )) ;;
+      down) sel=$(( sel + 1 )); [ "$sel" -ge "$vn" ] && sel=0 ;;
+
+      left)
+        # collapse the group you are in; from a child, go to its category first
+        if [ "${V_KIND[$sel]}" = mod ]; then
+          _p="$sel"
+          while [ "$_p" -gt 0 ] && [ "${V_KIND[$_p]}" != cat ]; do _p=$(( _p - 1 )); done
+          sel="$_p"
+        fi
+        if [ "${V_KIND[$sel]}" = cat ]; then
+          C_OPEN[${V_REF[$sel]}]=0; _save_open
+          build_visible; hlayout; draw_home
+          lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"
+        fi
+        continue ;;
+
       enter|right)
+        if [ "${V_KIND[$sel]}" = cat ]; then
+          # a category toggles in place — the whole point of the accordion
+          _r="${V_REF[$sel]}"
+          if [ "${C_OPEN[$_r]}" = "1" ]; then C_OPEN[$_r]=0; else C_OPEN[$_r]=1; fi
+          _save_open
+          build_visible; hlayout; draw_home
+          lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"
+          continue
+        fi
         tui_end
-        case "${H_ID[$sel]}" in
+        case "${H_ID[${V_REF[$sel]}]}" in
           vaults)    vault_screen ;;
           workspace) ws_screen ;;
           inbox)     inbox_screen ;;
@@ -804,6 +951,16 @@ HOMEG
           doctor)    do_doctor; ui_pause ;;
         esac
         tui_begin; tui_dims; hlayout; draw_home
+        lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"; continue ;;
+
+      char:E)
+        # expand everything — the old flat list, for when you know what you want
+        _c=0; while [ "$_c" -lt "$cn" ]; do C_OPEN[$_c]=1; _c=$(( _c + 1 )); done
+        _save_open; build_visible; hlayout; draw_home
+        lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"; continue ;;
+      char:C)
+        _c=0; while [ "$_c" -lt "$cn" ]; do C_OPEN[$_c]=0; _c=$(( _c + 1 )); done
+        _save_open; build_visible; sel=0; hlayout; draw_home
         lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"; continue ;;
       search) tui_end; palette_screen; tui_begin; tui_dims; hlayout; draw_home
               lastcols="$TUI_COLS"; lastrows="$TUI_ROWS"; continue ;;

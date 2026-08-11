@@ -184,9 +184,13 @@ tui_header() {
 # tui_modrow SELECTED ID LABEL COUNT DOTSTATE DOTLABEL
 # NOTE: glyph and hue are passed in, not looked up. Every $( ) here is a fork,
 # and a fork per row per redraw is exactly what made navigation flicker.
+# tui_modrow SELECTED MARK HUE LABEL COUNT DOTSTATE DOTLABEL [INDENT]
+# INDENT nests a row under its category in the accordion. It is added to the
+# left and taken off the leader, so every value still lands in the same column
+# whatever depth its row sits at.
 tui_modrow() {
-  local sel="$1" mark="$2" hue="$3" label="$4" count="$5" dot="$6" dlab="$7"
-  local dotcol glyph leader llen rlen
+  local sel="$1" mark="$2" hue="$3" label="$4" count="$5" dot="$6" dlab="$7" indent="${8:-0}"
+  local dotcol glyph leader llen rlen pad
 
   case "$dot" in
     ok)   dotcol="$T_OK";   glyph='●' ;;
@@ -198,9 +202,30 @@ tui_modrow() {
   # icon width is measured, never assumed: a 4-cell mark with a hardcoded 3 here
   # overruns the line, the terminal wraps it, and every absolutely-positioned row
   # below shifts by one — which looks like a mysterious blank line, not an overflow
-  llen=$(( 2 + 1 + 1 + ${#mark} + 2 + ${#label} ))
+  llen=$(( 2 + 1 + 1 + ${#mark} + 2 + ${#label} + indent ))
   rlen=$(( ${#count} + 2 + 1 + 1 + ${#dlab} + 2 ))
   leader=$(( TUI_COLS - llen - rlen - 2 ))
+
+  # A row that does not fit must SHRINK, never wrap. A wrapped row pushes every
+  # absolutely-positioned row below it out of place and the whole grid stops
+  # matching its line map — which is what happened to the category rows at 70
+  # columns, where the label, the value and the state together ran past the edge
+  # and the next module row was drawn over the overflow.
+  #
+  # The right-hand state label goes first: it is the least specific of the
+  # three. Then the value. The label itself is never cut, because a row you
+  # cannot identify is worse than one you cannot read the detail of.
+  if [ "$leader" -lt 2 ]; then
+    dlab="$(tui_fit "$dlab" $(( ${#dlab} + leader - 2 )))"
+    rlen=$(( ${#count} + 2 + 1 + 1 + ${#dlab} + 2 ))
+    leader=$(( TUI_COLS - llen - rlen - 2 ))
+  fi
+  if [ "$leader" -lt 2 ]; then
+    count="$(tui_fit "$count" $(( ${#count} + leader - 2 )))"
+    rlen=$(( ${#count} + 2 + 1 + 1 + ${#dlab} + 2 ))
+    leader=$(( TUI_COLS - llen - rlen - 2 ))
+  fi
+  [ "$leader" -lt 1 ] && leader=1
   [ "$leader" -lt 1 ] && leader=1
 
   # Row is built as PLAIN text plus a parallel colour map, then painted column by
@@ -212,6 +237,7 @@ tui_modrow() {
 
   if [ "$sel" = "1" ]; then _add "  " "n"; _add "▌" "a"; _add " " "n"
   else                      _add "    " "n"; fi
+  if [ "$indent" -gt 0 ]; then printf -v pad "%${indent}s" ''; _add "$pad" "n"; fi
   _add "$mark" "h"; _add "  " "n"
   _add "$label" "t"; _add " " "n"
   local _lead=""; [ "$leader" -gt 0 ] && { printf -v _lead "%${leader}s" ''; _lead="${_lead// /·}"; }
@@ -261,15 +287,17 @@ tui_modrow() {
 # One printf per row, not six. Every separate printf is a write syscall, and a
 # full repaint issues one of these per module.
 tui_moddesc() {
-  local sel="$1" text="$2" icon="${3:-}" hue="${4:-}" bg='' lead pad used out
+  local sel="$1" text="$2" icon="${3:-}" hue="${4:-}" indent="${5:-0}" bg='' lead pad used out ind=''
+  [ "$indent" -gt 0 ] && printf -v ind "%${indent}s" ''
+
   [ "$sel" = "1" ] && bg="$T_SELBG"
   if [ -n "$icon" ]; then
     if [ "$sel" = "1" ]; then lead="  ${T_ACCENT}▌${bg} "; else lead="    "; fi
-    used=$(( 4 + ${#icon} + 2 + ${#text} ))
-    out="${bg}${lead}${hue}${icon}${bg}  ${T_DIM}${text}${T_RS}${bg}"
+    used=$(( 4 + ${#ind} + ${#icon} + 2 + ${#text} ))
+    out="${bg}${lead}${ind}${hue}${icon}${bg}  ${T_DIM}${text}${T_RS}${bg}"
   else
-    used=$(( 9 + ${#text} ))
-    out="${bg}         ${T_DIM}${text}${T_RS}${bg}"
+    used=$(( 9 + ${#ind} + ${#text} ))
+    out="${bg}         ${ind}${T_DIM}${text}${T_RS}${bg}"
   fi
   pad=$(( TUI_COLS - used )); [ "$pad" -lt 0 ] && pad=0
   printf -v lead "%${pad}s" ''
