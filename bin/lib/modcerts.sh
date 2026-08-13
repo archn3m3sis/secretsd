@@ -139,7 +139,7 @@ CERTS
     m=$(( m + 1 ))
   done
 
-  local sel=0 key prev curline host nexp=0 nsoon=0
+  local sel=0 _before key prev curline host nexp=0 nsoon=0
   host="$(hostname -s 2>/dev/null || echo host)"
   i=0
   while [ "$i" -lt "$n" ]; do
@@ -173,14 +173,22 @@ CERTS
 
   draw_certs() {
     tui_home
-    tui_header "$host" "$n certificate file(s) · $nexp expired · $nsoon within 30 days · parsed from the certs" "CERTIFICATES" certs
+    # The window must be decided BEFORE the header is drawn: the header prints
+    # "12-19 of 58", and computing that from a viewport that has not run yet gave
+    # "1-0 of 58". Only the slice that fits is painted — drawing every item
+    # scrolled the terminal and invalidated every recorded line number, which is
+    # what made the highlight stick and the list glitch between items.
+    tui_view "$n" 3 "$sel" $(( TUI_ROWS - 6 ))
+    local _hint; _hint="$(tui_view_hint "$n")"
+    tui_header "$host" "$n certificate file(s) · $nexp expired · $nsoon within 30 days${_hint:+  ·  $_hint}" "CERTIFICATES" certs
     curline=4
-    i=0
-    while [ "$i" -lt "$n" ]; do
+    i="$TUI_VIEW_FIRST"
+    local _last=$(( TUI_VIEW_FIRST + TUI_VIEW_N ))
+    while [ "$i" -lt "$_last" ]; do
       C_LINE[$i]="$(( curline + 1 ))"
       draw_cert "$i" "$([ "$i" = "$sel" ] && echo 1 || echo 0)"
       curline=$(( curline + 2 ))
-      [ "$i" -lt $(( n - 1 )) ] && { tui_blank; curline=$(( curline + 1 )); }
+      [ "$i" -lt $(( _last - 1 )) ] && { tui_blank; curline=$(( curline + 1 )); }
       i=$(( i + 1 ))
     done
     local pad=$(( TUI_ROWS - curline - 2 )); [ "$pad" -lt 0 ] && pad=0
@@ -190,6 +198,7 @@ CERTS
   }
 
   tui_begin
+  tui_view_reset
   trap 'tui_end; cleanup' EXIT INT TERM
   tui_dims; draw_certs
 
@@ -220,7 +229,10 @@ CERTS
       quit|esc) break ;;
       *) continue ;;
     esac
-    draw_cert "$prev" 0; draw_cert "$sel" 1
+    _before="$TUI_VIEW_FIRST"
+    tui_view "$n" 3 "$sel" $(( TUI_ROWS - 6 ))
+    if [ "$TUI_VIEW_FIRST" != "$_before" ]; then draw_certs
+    else draw_cert "$prev" 0; draw_cert "$sel" 1; fi
   done
   tui_end
   trap 'cleanup' EXIT INT TERM

@@ -190,7 +190,7 @@ KEYS
   # behind their back is exactly the kind of "help" that breaks a working setup.
   local i fixed=0
 
-  local sel=0 key prev curline host nopass ngap
+  local sel=0 _before key prev curline host nopass ngap
   host="$(hostname -s 2>/dev/null || echo host)"
   nopass=0; i=0
   while [ "$i" -lt "$n" ]; do [ "${K_PASS[$i]}" = "0" ] && nopass=$(( nopass + 1 )); i=$(( i + 1 )); done
@@ -215,14 +215,22 @@ KEYS
 
   draw_keys() {
     tui_home
-    tui_header "$host" "$n key(s) · $nopass without a passphrase · $nagent loaded in the agent · $ngap config gap(s)" "SSH KEYS" keys
+    # The window must be decided BEFORE the header is drawn: the header prints
+    # "12-19 of 58", and computing that from a viewport that has not run yet gave
+    # "1-0 of 58". Only the slice that fits is painted — drawing every item
+    # scrolled the terminal and invalidated every recorded line number, which is
+    # what made the highlight stick and the list glitch between items.
+    tui_view "$n" 3 "$sel" $(( TUI_ROWS - 6 ))
+    local _hint; _hint="$(tui_view_hint "$n")"
+    tui_header "$host" "$n key(s) · $nopass without a passphrase · $nagent in the agent${_hint:+  ·  $_hint}" "SSH KEYS" keys
     curline=4
-    i=0
-    while [ "$i" -lt "$n" ]; do
+    i="$TUI_VIEW_FIRST"
+    local _last=$(( TUI_VIEW_FIRST + TUI_VIEW_N ))
+    while [ "$i" -lt "$_last" ]; do
       K_LINE[$i]="$(( curline + 1 ))"
       draw_key "$i" "$([ "$i" = "$sel" ] && echo 1 || echo 0)"
       curline=$(( curline + 2 ))
-      if [ "$i" -lt $(( n - 1 )) ]; then tui_blank; curline=$(( curline + 1 )); fi
+      if [ "$i" -lt $(( _last - 1 )) ]; then tui_blank; curline=$(( curline + 1 )); fi
       i=$(( i + 1 ))
     done
     local pad=$(( TUI_ROWS - curline - 2 )); [ "$pad" -lt 0 ] && pad=0
@@ -232,6 +240,7 @@ KEYS
   }
 
   tui_begin
+  tui_view_reset
   trap 'tui_end; cleanup' EXIT INT TERM
   tui_dims; draw_keys
 
@@ -348,7 +357,10 @@ KEYS
       quit|esc) break ;;
       *) continue ;;
     esac
-    draw_key "$prev" 0; draw_key "$sel" 1
+    _before="$TUI_VIEW_FIRST"
+    tui_view "$n" 3 "$sel" $(( TUI_ROWS - 6 ))
+    if [ "$TUI_VIEW_FIRST" != "$_before" ]; then draw_keys
+    else draw_key "$prev" 0; draw_key "$sel" 1; fi
   done
   tui_end
   trap 'cleanup' EXIT INT TERM

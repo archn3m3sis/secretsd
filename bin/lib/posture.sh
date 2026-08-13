@@ -363,7 +363,7 @@ POSTURE
     ui_pause; return 0
   fi
 
-  local sel=0 key prev curline host ncrit=0 nhigh=0
+  local sel=0 _before key prev curline host ncrit=0 nhigh=0
   host="$(hostname -s 2>/dev/null || echo host)"
   i=0
   while [ "$i" -lt "$n" ]; do
@@ -390,14 +390,22 @@ POSTURE
 
   draw_posture() {
     tui_home
-    tui_header "$host" "$n finding(s) · $ncrit critical · $nhigh high · nothing is changed without you" "SECURITY POSTURE" posture
+    # The window must be decided BEFORE the header is drawn: the header prints
+    # "12-19 of 58", and computing that from a viewport that has not run yet gave
+    # "1-0 of 58". Only the slice that fits is painted — drawing every item
+    # scrolled the terminal and invalidated every recorded line number, which is
+    # what made the highlight stick and the list glitch between items.
+    tui_view "$n" 3 "$sel" $(( TUI_ROWS - 6 ))
+    local _hint; _hint="$(tui_view_hint "$n")"
+    tui_header "$host" "$n finding(s) · $ncrit critical · $nhigh high${_hint:+  ·  $_hint}" "SECURITY POSTURE" posture
     curline=4
-    i=0
-    while [ "$i" -lt "$n" ]; do
+    i="$TUI_VIEW_FIRST"
+    local _last=$(( TUI_VIEW_FIRST + TUI_VIEW_N ))
+    while [ "$i" -lt "$_last" ]; do
       O_LINE[$i]="$(( curline + 1 ))"
       draw_finding "$i" "$([ "$i" = "$sel" ] && echo 1 || echo 0)"
       curline=$(( curline + 2 ))
-      if [ "$i" -lt $(( n - 1 )) ]; then tui_blank; curline=$(( curline + 1 )); fi
+      if [ "$i" -lt $(( _last - 1 )) ]; then tui_blank; curline=$(( curline + 1 )); fi
       i=$(( i + 1 ))
     done
     local pad=$(( TUI_ROWS - curline - 2 )); [ "$pad" -lt 0 ] && pad=0
@@ -407,6 +415,7 @@ POSTURE
   }
 
   tui_begin
+  tui_view_reset
   trap 'tui_end; cleanup' EXIT INT TERM
   tui_dims; draw_posture
 
@@ -469,7 +478,10 @@ POSTURE
       quit|esc) break ;;
       *) continue ;;
     esac
-    draw_finding "$prev" 0; draw_finding "$sel" 1
+    _before="$TUI_VIEW_FIRST"
+    tui_view "$n" 3 "$sel" $(( TUI_ROWS - 6 ))
+    if [ "$TUI_VIEW_FIRST" != "$_before" ]; then draw_posture
+    else draw_finding "$prev" 0; draw_finding "$sel" 1; fi
   done
   tui_end
   trap 'cleanup' EXIT INT TERM

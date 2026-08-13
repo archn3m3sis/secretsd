@@ -777,6 +777,56 @@ KVG2
   TUI_KVCOL="$old"
 }
 
+# --- scrolling viewport -------------------------------------------------------
+#
+# EVERY list screen drew every item, however many there were. With 28 SSH hosts
+# at 3 lines each that is 84 lines painted into a 40-row terminal: the terminal
+# SCROLLS, every absolutely-positioned line number recorded during the draw is
+# then wrong, and redrawing a single row on a keypress writes it somewhere else
+# entirely. That is what a "stuck" highlight and a glitching list actually are.
+#
+# tui_view decides which slice is on screen and keeps the selection inside it.
+# The caller draws only that slice, so nothing is ever painted past the bottom
+# and the line map stays true.
+#
+#   tui_view TOTAL PER_ITEM SEL AVAIL_ROWS  ->  sets TUI_VIEW_FIRST / TUI_VIEW_N
+#
+# TUI_VIEW_FIRST persists between calls so the window does not jump back to the
+# top on every repaint; it is only moved when the selection would leave it.
+TUI_VIEW_FIRST=0
+TUI_VIEW_N=0
+tui_view() {
+  local total="$1" per="$2" sel="$3" avail="$4" cap first
+  [ "$per" -ge 1 ] || per=1
+  cap=$(( avail / per ))
+  [ "$cap" -lt 1 ] && cap=1
+  [ "$cap" -gt "$total" ] && cap="$total"
+
+  first="$TUI_VIEW_FIRST"
+  [ "$first" -gt $(( total - cap )) ] && first=$(( total - cap ))
+  [ "$first" -lt 0 ] && first=0
+  # scroll only far enough to bring the selection back into view
+  [ "$sel" -lt "$first" ] && first="$sel"
+  [ "$sel" -ge $(( first + cap )) ] && first=$(( sel - cap + 1 ))
+  [ "$first" -lt 0 ] && first=0
+
+  TUI_VIEW_FIRST="$first"
+  TUI_VIEW_N="$cap"
+}
+
+# tui_view_reset — call when a screen is (re)entered so it opens at the top.
+tui_view_reset() { TUI_VIEW_FIRST=0; TUI_VIEW_N=0; }
+
+# tui_view_hint TOTAL — "12-19 of 28  ↑↓ more" for the header, or empty when
+# everything fits. A list that silently shows a third of its contents is worse
+# than one that scrolls badly.
+tui_view_hint() {
+  local total="$1"
+  [ "$TUI_VIEW_N" -lt "$total" ] || return 0
+  printf '%s-%s of %s' "$(( TUI_VIEW_FIRST + 1 ))" \
+    "$(( TUI_VIEW_FIRST + TUI_VIEW_N ))" "$total"
+}
+
 # tui_badge TEXT STATE — a small inline status chip
 tui_badge() {
   local t="$1" st="$2" c

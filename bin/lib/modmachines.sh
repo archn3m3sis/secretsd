@@ -74,7 +74,7 @@ HOSTS
     ui_pause; return 0
   fi
 
-  local sel=0 key prev curline host i nbad=0
+  local sel=0 key prev _before curline host i nbad=0
   host="$(hostname -s 2>/dev/null || echo host)"
   i=0; while [ "$i" -lt "$n" ]; do [ "${M_KEYOK[$i]}" = "0" ] && nbad=$(( nbad + 1 )); i=$(( i + 1 )); done
 
@@ -95,14 +95,23 @@ HOSTS
 
   draw_machines() {
     tui_home
-    tui_header "$host" "$n host(s) from ~/.ssh/config · $nbad with a missing key · probes are TCP only, never auth" "MACHINES" machines
+    # Only the slice that FITS is drawn. Painting all 28 hosts at 3 lines each
+    # scrolled the terminal, which invalidated every M_LINE recorded during the
+    # draw — so redrawing one row on a keypress wrote it to the wrong place and
+    # the highlight appeared stuck.
+    tui_view "$n" 3 "$sel" $(( TUI_ROWS - 6 ))
+    local hint; hint="$(tui_view_hint "$n")"
+    tui_header "$host" \
+      "$n host(s) from ~/.ssh/config · $nbad with a missing key · probes are TCP only, never auth${hint:+  ·  $hint}" \
+      "MACHINES" machines
     curline=4
-    i=0
-    while [ "$i" -lt "$n" ]; do
+    local last=$(( TUI_VIEW_FIRST + TUI_VIEW_N ))
+    i="$TUI_VIEW_FIRST"
+    while [ "$i" -lt "$last" ]; do
       M_LINE[$i]="$(( curline + 1 ))"
       draw_mach "$i" "$([ "$i" = "$sel" ] && echo 1 || echo 0)"
       curline=$(( curline + 2 ))
-      [ "$i" -lt $(( n - 1 )) ] && { tui_blank; curline=$(( curline + 1 )); }
+      [ "$i" -lt $(( last - 1 )) ] && { tui_blank; curline=$(( curline + 1 )); }
       i=$(( i + 1 ))
     done
     local pad=$(( TUI_ROWS - curline - 2 )); [ "$pad" -lt 0 ] && pad=0
@@ -113,6 +122,7 @@ HOSTS
 
   tui_begin
   trap 'tui_end; cleanup' EXIT INT TERM
+  tui_view_reset
   tui_dims; draw_machines
 
   while :; do
@@ -168,7 +178,17 @@ HOSTS
       quit|esc) break ;;
       *) continue ;;
     esac
-    draw_mach "$prev" 0; draw_mach "$sel" 1
+    # A two-row repaint is only valid while the WINDOW has not moved. Moving
+    # the selection past either edge scrolls it, and then every visible row
+    # changed — repaint the screen instead of two rows that are no longer where
+    # the line map says they are.
+    _before="$TUI_VIEW_FIRST"
+    tui_view "$n" 3 "$sel" $(( TUI_ROWS - 6 ))
+    if [ "$TUI_VIEW_FIRST" != "$_before" ]; then
+      draw_machines
+    else
+      draw_mach "$prev" 0; draw_mach "$sel" 1
+    fi
   done
   tui_end
   trap 'cleanup' EXIT INT TERM

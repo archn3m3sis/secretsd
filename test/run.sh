@@ -1393,6 +1393,83 @@ if want echo; then
                          || no "the mark is written character by character"
 fi
 
+
+# ==============================================================================
+# list screens must scroll, not overflow
+#
+# Every list screen painted every item. 28 SSH hosts at 3 lines each is 84 lines
+# into a 40-row terminal: the terminal SCROLLS, every absolutely-positioned line
+# number recorded during the draw becomes wrong, and redrawing one row on a
+# keypress writes it somewhere else. That is what a stuck highlight and a
+# glitching list actually are.
+# ==============================================================================
+if want viewport; then
+  group "scrolling viewport"
+
+  # the arithmetic, at the boundaries that matter
+  r="$(bash -c '
+    . "'"$ROOT"'/bin/lib/tui.sh" 2>/dev/null
+    o=""
+    tui_view_reset; tui_view 28 3 0  36; o="$o $TUI_VIEW_FIRST/$TUI_VIEW_N"
+    tui_view_reset; tui_view 28 3 27 36; o="$o $TUI_VIEW_FIRST/$TUI_VIEW_N"
+    tui_view_reset; tui_view 5  3 4  36; o="$o $TUI_VIEW_FIRST/$TUI_VIEW_N"
+    tui_view_reset; tui_view 28 3 0  4;  o="$o $TUI_VIEW_FIRST/$TUI_VIEW_N"
+    echo "$o"')"
+  [ "$r" = " 0/12 16/12 0/5 0/1" ] \
+    && ok "the viewport window is correct at both ends and when everything fits" \
+    || no "viewport arithmetic wrong" "got [$r]"
+
+  # it must never scroll past the end, and never leave the selection off-screen
+  bad="$(bash -c '
+    . "'"$ROOT"'/bin/lib/tui.sh" 2>/dev/null
+    fail=""
+    for total in 1 2 5 28 89; do
+      for sel in $(seq 0 $(( total - 1 ))); do
+        tui_view_reset
+        tui_view "$total" 3 "$sel" 36
+        f="$TUI_VIEW_FIRST"; c="$TUI_VIEW_N"
+        [ "$f" -lt 0 ] && fail="$fail neg($total,$sel)"
+        [ $(( f + c )) -gt "$total" ] && fail="$fail past-end($total,$sel)"
+        { [ "$sel" -lt "$f" ] || [ "$sel" -ge $(( f + c )) ]; } && fail="$fail off-screen($total,$sel)"
+      done
+    done
+    echo "$fail"')"
+  [ -z "$bad" ] && ok "the selection is always inside the window, which never runs past the end" \
+                || no "viewport invariants broken:$bad"
+
+  # every list screen must USE it — one that does not will overflow again
+  missing=""
+  for f in modmachines modcerts modkeys posture inbox; do
+    grep -q 'tui_view ' "$ROOT/bin/lib/$f.sh" || missing="$missing $f"
+  done
+  [ -z "$missing" ] && ok "every list screen windows its output" \
+                    || no "screens still painting every item:$missing"
+
+  # and each must repaint the SCREEN when the window moves, not two stale rows
+  bad=""
+  for f in modmachines modcerts modkeys posture inbox; do
+    grep -q 'TUI_VIEW_FIRST" != "\$_before' "$ROOT/bin/lib/$f.sh" || bad="$bad $f"
+  done
+  [ -z "$bad" ] && ok "each screen repaints when the window scrolls" \
+                || no "screens that would leave stale rows on scroll:$bad"
+
+  # RENDERING: nothing may be painted past the bottom of the terminal
+  SHOT3="$ROOT/test/shot.py"
+  if [ -f "$SHOT3" ]; then
+    bad=""
+    for sc in machines keys certs posture inbox; do
+      for size in 70x18 108x26; do
+        c="${size%x*}"; r="${size#*x}"
+        n="$(SD_BIN="$BIN" SECRETSD_HOME="$DATA" SOPS_AGE_KEY_FILE="$AGE_KEY" \
+             python3 "$SHOT3" "$c" "$r" "$sc" 2>/dev/null | grep -c '│')"
+        [ "${n:-0}" = "$r" ] || bad="$bad $sc@$size($n/$r)"
+      done
+    done
+    [ -z "$bad" ] && ok "no list screen paints past the bottom at any size" \
+                  || no "screens overflowing the terminal:$bad"
+  fi
+fi
+
 # ==============================================================================
 printf '\n%s%s passed%s' "$G" "$PASS" "$X"
 [ "$FAIL" -gt 0 ] && printf '  %s%s failed%s' "$R" "$FAIL" "$X"
